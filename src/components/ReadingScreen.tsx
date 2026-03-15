@@ -37,26 +37,36 @@ export const ReadingScreen = ({
 
   const stopListeningRef = useRef<(() => void) | null>(null);
   const resetListeningRef = useRef<(() => void) | null>(null);
+  const expectedWordsRef = useRef<string[]>([]);
 
   const currentPage = book.pages[currentPageIndex];
   const sentenceWords = currentPage.text.split(/\s+/);
   const expectedWords = sentenceWords.map(w => normalizeWord(w));
 
+  // Update ref whenever expectedWords changes
+  useEffect(() => {
+    expectedWordsRef.current = expectedWords;
+  }, [expectedWords]);
+
   // Reset page state when page changes
   useEffect(() => {
     console.log(`[ReadingScreen] Page changed to ${currentPageIndex}`);
+    console.log(`[ReadingScreen] Expected words for page ${currentPageIndex}:`, expectedWords);
     setWordStates(expectedWords.map(() => 'neutral'));
     setCompletedWords(0);
-  }, [currentPageIndex]);
+  }, [currentPageIndex, expectedWords]);
 
   const handleProgressUpdate = useCallback((matchedCount: number, transcript: string, wasAdvanced: boolean) => {
+    const currentExpectedWords = expectedWordsRef.current;
+
     if (wasAdvanced) {
-      console.log(`[ReadingScreen] Progress advanced: ${matchedCount}/${expectedWords.length} words matched`);
+      console.log(`[ReadingScreen] Progress advanced: ${matchedCount}/${currentExpectedWords.length} words matched`);
+      console.log(`[ReadingScreen] Current expected words:`, currentExpectedWords);
     }
 
     setCompletedWords(prevCount => Math.max(prevCount, matchedCount));
 
-    const newStates = expectedWords.map((_, index) => {
+    const newStates = currentExpectedWords.map((_, index) => {
       if (index < matchedCount) return 'correct';
       if (index === matchedCount) return 'current';
       return 'neutral';
@@ -64,12 +74,12 @@ export const ReadingScreen = ({
 
     setWordStates(newStates);
 
-    if (matchedCount === expectedWords.length && matchedCount > 0) {
+    if (matchedCount === currentExpectedWords.length && matchedCount > 0) {
       console.log('[ReadingScreen] Page complete! Stopping listening.');
       onPageComplete(currentPageIndex);
       setListening(false);
     }
-  }, [expectedWords, currentPageIndex, onPageComplete]);
+  }, [currentPageIndex, onPageComplete]);
 
   const {
     isListening,
@@ -254,18 +264,29 @@ export const ReadingScreen = ({
           <div className="bg-gray-800 text-white rounded-2xl p-4 mb-6 font-mono text-xs">
             <h3 className="font-bold mb-2 text-sm">Debug Info</h3>
             <div className="space-y-1">
-              <p className="text-blue-400 font-bold">Page: {currentPageIndex + 1}</p>
-              <p className="text-purple-400 font-bold">Status: {recognitionStatus.toUpperCase()}</p>
+              <p className="text-blue-400 font-bold border-b border-gray-600 pb-1">PAGE STATE</p>
+              <p>Current page index: {currentPageIndex}</p>
+              <p>Displayed text: {currentPage.text}</p>
+              <p>Current sentence ref: {currentPage.text}</p>
+              <p>Expected words (UI): [{expectedWords.join(', ')}]</p>
+              <p>Expected words (ref): [{expectedWordsRef.current.join(', ')}]</p>
+              <p>Completed words count: {completedWords}/{expectedWords.length}</p>
+              <p>Page complete: {isPageComplete ? 'YES' : 'NO'}</p>
+
+              <p className="text-purple-400 font-bold border-b border-gray-600 pb-1 pt-2">SPEECH STATE</p>
+              <p>Status: {recognitionStatus.toUpperCase()}</p>
               <p>Listening: {isListening ? 'YES' : 'NO'}</p>
               <p>Auto-listen: {settings.autoListening ? 'YES' : 'NO'}</p>
-              <p className="border-t border-gray-600 pt-1 mt-2">You said: {debugInfo.rawTranscript || '(nothing yet)'}</p>
+
+              <p className="text-green-400 font-bold border-b border-gray-600 pb-1 pt-2">MATCH STATE</p>
+              <p>You said: {debugInfo.rawTranscript || '(nothing yet)'}</p>
               <p>Spoken words: [{debugInfo.normalizedWords.join(', ')}]</p>
-              <p>Expected: [{debugInfo.expectedWords.join(', ')}]</p>
+              <p>Expected (from hook): [{debugInfo.expectedWords.join(', ')}]</p>
               <p className="text-yellow-400 font-bold">Matched: {debugInfo.matchedCount}/{expectedWords.length}</p>
               <p className={debugInfo.wasAdvanced ? 'text-green-400' : 'text-gray-400'}>
                 Progress advanced: {debugInfo.wasAdvanced ? 'YES' : 'NO'}
               </p>
-              <p className="text-cyan-400">Has image: {currentPage.imagePrompt ? 'YES' : 'NO'}</p>
+              <p>Page ID in hook: {debugInfo.pageId}</p>
             </div>
           </div>
         )}
