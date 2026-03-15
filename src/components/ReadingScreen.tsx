@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BookLevel, AppSettings } from '../types';
-import { useMediaRecorder } from '../hooks/useMediaRecorder';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { BookIllustration } from './BookIllustration';
 import { ArrowLeft, ArrowRight, Volume2, Circle, RotateCcw, Mic, CheckCircle2 } from 'lucide-react';
 
@@ -16,16 +16,29 @@ interface ReadingScreenProps {
 
 type WordState = 'neutral' | 'current' | 'correct';
 
-const normalizeWord = (word: string): string => {
-  return word.toLowerCase().trim().replace(/[.,!?;:"']/g, '');
-};
-
 const normalizeText = (text: string): string[] => {
   return text
     .toLowerCase()
-    .replace(/[.,!?;:"']/g, '')
-    .split(/\s+/)
-    .filter(w => w.length > 0);
+    .replace(/[.,!?;:"']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+};
+
+
+const getSequentialMatchCount = (sourceWords: string[], targetWords: string[]): number => {
+  let matchedCount = 0;
+
+  for (let index = 0; index < Math.min(sourceWords.length, targetWords.length); index += 1) {
+    if (sourceWords[index] !== targetWords[index]) {
+      break;
+    }
+
+    matchedCount = index + 1;
+  }
+
+  return matchedCount;
 };
 
 export const ReadingScreen = ({
@@ -38,98 +51,112 @@ export const ReadingScreen = ({
   onBookComplete
 }: ReadingScreenProps) => {
   const [currentPageIndex, setCurrentPageIndex] = useState(initialPage);
+  const [pageMatchedCounts, setPageMatchedCounts] = useState<number[]>(book.pages.map(() => 0));
   const [completedWords, setCompletedWords] = useState(0);
   const [wordStates, setWordStates] = useState<WordState[]>([]);
   const [lastTranscript, setLastTranscript] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
   const [animatingWords, setAnimatingWords] = useState(false);
 
-  const {
-    status,
-    error,
-    isRecording,
-    isProcessing,
-    isSupported,
-    startRecording,
-    stopRecording,
-  } = useMediaRecorder();
-
   const currentPage = book.pages[currentPageIndex];
   const sentenceWords = currentPage.text.split(/\s+/);
-  const expectedWords = sentenceWords.map(w => normalizeWord(w));
+  const expectedWords = normalizeText(currentPage.text);
+
+  const {
+    isListening,
+    isSupported,
+    interimTranscript,
+    finalTranscript,
+    error,
+    status,
+    startListening,
+    stopListening,
+    resetSession,
+  } = useSpeechRecognition({
+    pageId: `${book.id}-${currentPageIndex}`,
+  });
 
   useEffect(() => {
-    console.log(`[ReadingScreen] Page ${currentPageIndex + 1} loaded`);
-    setWordStates(expectedWords.map(() => 'neutral'));
-    setCompletedWords(0);
-    setLastTranscript('');
-    setShowTranscript(false);
-    setAnimatingWords(false);
-  }, [currentPageIndex]);
+    setPageMatchedCounts(book.pages.map(() => 0));
+    setCurrentPageIndex(initialPage);
+  }, [book.id, book.pages, initialPage]);
 
-  const updateProgress = (transcript: string) => {
-    const spokenWords = normalizeText(transcript);
+  useEffect(() => {
+    const matchedCount = Math.min(pageMatchedCounts[currentPageIndex] ?? 0, expectedWords.length);
+    setCompletedWords(matchedCount);
 
-    console.log('[Progress] Transcript:', transcript);
-    console.log('[Progress] Spoken:', spokenWords);
-    console.log('[Progress] Expected:', expectedWords);
-
-    let newMatchCount = 0;
-    for (let i = 0; i < Math.min(spokenWords.length, expectedWords.length); i++) {
-      if (spokenWords[i] === expectedWords[i]) {
-        newMatchCount = i + 1;
-      } else {
-        break;
-      }
-    }
-
-    const finalMatchCount = Math.max(completedWords, newMatchCount);
-
-    console.log('[Progress] Previous:', completedWords);
-    console.log('[Progress] New:', newMatchCount);
-    console.log('[Progress] Final:', finalMatchCount);
-
-    if (finalMatchCount > completedWords) {
-      setAnimatingWords(true);
-      setTimeout(() => setAnimatingWords(false), 1000);
-    }
-
-    setCompletedWords(finalMatchCount);
-
-    const newStates = expectedWords.map((_, index) => {
-      if (index < finalMatchCount) return 'correct';
-      if (index === finalMatchCount) return 'current';
+    const newStates = sentenceWords.map((_, index) => {
+      if (index < matchedCount) return 'correct';
+      if (index === matchedCount) return 'current';
       return 'neutral';
     });
 
     setWordStates(newStates);
+    setLastTranscript('');
+    setShowTranscript(false);
+    setAnimatingWords(false);
+    resetSession();
+  }, [currentPageIndex, pageMatchedCounts, expectedWords.length, sentenceWords, resetSession]);
 
-    if (finalMatchCount === expectedWords.length && expectedWords.length > 0) {
-      console.log('[Progress] Page complete!');
+  const applyMatchedCount = (nextMatchedCount: number) => {
+    const finalMatchedCount = Math.max(completedWords, Math.min(nextMatchedCount, expectedWords.length));
+
+    if (finalMatchedCount > completedWords) {
+      setAnimatingWords(true);
+      setTimeout(() => setAnimatingWords(false), 1000);
+    }
+
+    setCompletedWords(finalMatchedCount);
+
+    setPageMatchedCounts((previous) => {
+      const next = [...previous];
+      next[currentPageIndex] = finalMatchedCount;
+      return next;
+    });
+
+    const newStates = sentenceWords.map((_, index) => {
+      if (index < finalMatchedCount) return 'correct';
+      if (index === finalMatchedCount) return 'current';
+      return 'neutral';
+    });
+    setWordStates(newStates);
+
+    if (finalMatchedCount === expectedWords.length && expectedWords.length > 0) {
       onPageComplete(currentPageIndex);
     }
   };
 
-  const handleStartReading = async () => {
-    console.log('[ReadingScreen] Start Reading clicked');
+  const scoreTranscript = (transcript: string) => {
+    const spokenWords = normalizeText(transcript);
+    const previousMatchedCount = completedWords;
+
+    const fullSentenceMatchedCount = getSequentialMatchCount(spokenWords, expectedWords);
+
+    const remainingExpectedWords = expectedWords.slice(previousMatchedCount);
+    const tailMatchedCount = getSequentialMatchCount(spokenWords, remainingExpectedWords);
+    const tailAlignedMatchedCount = previousMatchedCount + tailMatchedCount;
+
+    const detectedMatchedCount = Math.max(fullSentenceMatchedCount, tailAlignedMatchedCount);
+    const newMatchedCount = Math.max(previousMatchedCount, detectedMatchedCount);
+
+    applyMatchedCount(newMatchedCount);
+  };
+
+  const handleStartReading = () => {
     setShowTranscript(false);
     setLastTranscript('');
-    await startRecording();
+    startListening();
   };
 
   const handleCheckReading = async () => {
-    console.log('[ReadingScreen] Check My Reading clicked');
-    const transcript = await stopRecording();
+    const transcript = await stopListening();
     setLastTranscript(transcript);
     setShowTranscript(true);
-
-    setTimeout(() => {
-      updateProgress(transcript);
-    }, 100);
+    scoreTranscript(transcript);
   };
 
   const handleWordTap = (index: number) => {
-    if (settings.soundEnabled && !isRecording) {
+    if (settings.soundEnabled && !isListening) {
       const utterance = new SpeechSynthesisUtterance(sentenceWords[index]);
       utterance.rate = 0.8;
       utterance.pitch = 1.1;
@@ -139,12 +166,17 @@ export const ReadingScreen = ({
   };
 
   const handleResetPage = () => {
-    console.log('[ReadingScreen] Reset Page');
+    setPageMatchedCounts((previous) => {
+      const next = [...previous];
+      next[currentPageIndex] = 0;
+      return next;
+    });
     setCompletedWords(0);
-    setWordStates(expectedWords.map(() => 'neutral'));
+    setWordStates(sentenceWords.map((_, index) => (index === 0 ? 'current' : 'neutral')));
     setLastTranscript('');
     setShowTranscript(false);
     setAnimatingWords(false);
+    resetSession();
   };
 
   const speakText = (text: string) => {
@@ -157,14 +189,12 @@ export const ReadingScreen = ({
   };
 
   const handleHearIt = () => {
-    if (!isRecording) {
+    if (!isListening) {
       speakText(currentPage.text);
     }
   };
 
   const handleNextPage = () => {
-    console.log('[ReadingScreen] Next page');
-
     if (currentPageIndex < book.pages.length - 1) {
       setCurrentPageIndex(currentPageIndex + 1);
     } else {
@@ -173,8 +203,6 @@ export const ReadingScreen = ({
   };
 
   const handlePrevPage = () => {
-    console.log('[ReadingScreen] Previous page');
-
     if (currentPageIndex > 0) {
       setCurrentPageIndex(currentPageIndex - 1);
     }
@@ -182,7 +210,7 @@ export const ReadingScreen = ({
 
   const isPageComplete = completedWords === expectedWords.length && expectedWords.length > 0;
 
-  const getWordClassName = (state: WordState, index: number): string => {
+  const getWordClassName = (state: WordState): string => {
     const base = 'inline-block px-3 py-2 mx-1 my-1 rounded-xl transition-all duration-500 cursor-pointer text-3xl md:text-5xl font-bold';
     const animation = animatingWords && state === 'correct' ? 'animate-bounce' : '';
 
@@ -197,16 +225,16 @@ export const ReadingScreen = ({
   };
 
   const getStatusText = () => {
-    if (isRecording) return 'Listening... Read the sentence!';
-    if (isProcessing) return 'Processing what you said...';
+    if (isListening) return 'Listening... Read the sentence!';
+    if (status === 'error') return 'Speech recognition had a problem. Please try again.';
     if (isPageComplete) return 'Page Complete! Great reading!';
-    if (showTranscript && lastTranscript) return 'Check your progress below';
+    if (showTranscript) return 'Check your progress below';
     return 'Tap "Start Reading" when ready';
   };
 
   const getStatusColor = () => {
-    if (isRecording) return 'bg-red-50 border-red-400 text-red-800';
-    if (isProcessing) return 'bg-orange-50 border-orange-400 text-orange-800';
+    if (isListening) return 'bg-red-50 border-red-400 text-red-800';
+    if (status === 'error') return 'bg-red-50 border-red-400 text-red-800';
     if (isPageComplete) return 'bg-green-50 border-green-400 text-green-800';
     if (showTranscript) return 'bg-blue-50 border-blue-400 text-blue-800';
     return 'bg-gray-50 border-gray-400 text-gray-800';
@@ -218,7 +246,7 @@ export const ReadingScreen = ({
         <div className="flex justify-between items-center mb-6">
           <button
             onClick={onBack}
-            disabled={isRecording || isProcessing}
+            disabled={isListening}
             className="flex items-center gap-2 px-4 py-3 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -241,7 +269,7 @@ export const ReadingScreen = ({
         <div className={`border-2 rounded-2xl p-4 mb-6 ${getStatusColor()}`}>
           <div className="flex items-center justify-center mb-2">
             <p className="font-semibold text-center flex items-center gap-2">
-              {isRecording && <Circle className="w-3 h-3 fill-current animate-pulse" />}
+              {isListening && <Circle className="w-3 h-3 fill-current animate-pulse" />}
               {getStatusText()}
             </p>
           </div>
@@ -249,13 +277,16 @@ export const ReadingScreen = ({
             <p className="text-sm">
               Progress: <span className="font-bold">{completedWords}/{expectedWords.length}</span> words
             </p>
+            {isListening && interimTranscript && (
+              <p className="text-sm mt-2 opacity-80">Hearing: {`${finalTranscript} ${interimTranscript}`.trim()}</p>
+            )}
           </div>
         </div>
 
-        {settings.showTranscript && showTranscript && lastTranscript && (
+        {settings.showTranscript && showTranscript && (
           <div className="bg-white border-2 border-blue-400 rounded-2xl p-4 mb-6">
             <p className="text-sm font-semibold text-gray-600 mb-2">What I heard:</p>
-            <p className="text-lg text-blue-800 font-medium">{lastTranscript}</p>
+            <p className="text-lg text-blue-800 font-medium">{lastTranscript || '(no transcript)'}</p>
           </div>
         )}
 
@@ -269,7 +300,7 @@ export const ReadingScreen = ({
               {sentenceWords.map((word, index) => (
                 <span
                   key={index}
-                  className={getWordClassName(wordStates[index], index)}
+                  className={getWordClassName(wordStates[index])}
                   onClick={() => handleWordTap(index)}
                 >
                   {word}
@@ -280,7 +311,7 @@ export const ReadingScreen = ({
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-          {!isRecording && !isProcessing && (
+          {!isListening && (
             <button
               onClick={handleStartReading}
               disabled={!isSupported}
@@ -291,7 +322,7 @@ export const ReadingScreen = ({
             </button>
           )}
 
-          {isRecording && (
+          {isListening && (
             <button
               onClick={handleCheckReading}
               className="flex items-center justify-center gap-2 px-6 py-4 bg-red-500 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-bold text-lg animate-pulse"
@@ -301,16 +332,9 @@ export const ReadingScreen = ({
             </button>
           )}
 
-          {isProcessing && (
-            <div className="flex items-center justify-center gap-2 px-6 py-4 bg-orange-400 text-white rounded-2xl shadow-lg font-bold text-lg">
-              <Circle className="w-6 h-6 animate-spin" />
-              Processing...
-            </div>
-          )}
-
           <button
             onClick={handleHearIt}
-            disabled={isRecording}
+            disabled={isListening}
             className="flex items-center justify-center gap-2 px-4 py-3 bg-green-500 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Volume2 className="w-5 h-5" />
@@ -319,7 +343,7 @@ export const ReadingScreen = ({
 
           <button
             onClick={handleResetPage}
-            disabled={isRecording || isProcessing}
+            disabled={isListening}
             className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RotateCcw className="w-5 h-5" />
@@ -328,9 +352,9 @@ export const ReadingScreen = ({
 
           <button
             onClick={handlePrevPage}
-            disabled={currentPageIndex === 0 || isRecording || isProcessing}
+            disabled={currentPageIndex === 0 || isListening}
             className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl shadow-lg font-bold transition-all ${
-              currentPageIndex === 0 || isRecording || isProcessing
+              currentPageIndex === 0 || isListening
                 ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 : 'bg-white text-gray-700 hover:shadow-xl hover:scale-105'
             }`}
@@ -341,9 +365,9 @@ export const ReadingScreen = ({
 
           <button
             onClick={handleNextPage}
-            disabled={!isPageComplete || isRecording || isProcessing}
+            disabled={!isPageComplete || isListening}
             className={`flex items-center justify-center gap-2 px-6 py-4 rounded-2xl shadow-lg font-bold transition-all text-lg col-span-2 md:col-span-1 ${
-              !isPageComplete || isRecording || isProcessing
+              !isPageComplete || isListening
                 ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 : 'bg-green-500 text-white hover:shadow-xl hover:scale-105'
             }`}
@@ -364,7 +388,7 @@ export const ReadingScreen = ({
         {!isSupported && (
           <div className="bg-yellow-100 border-2 border-yellow-400 rounded-2xl p-4 mt-6">
             <p className="text-yellow-800 font-semibold text-center">
-              Voice recording is not supported in this browser. Please use a modern browser like Chrome, Edge, or Safari.
+              Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.
             </p>
           </div>
         )}
