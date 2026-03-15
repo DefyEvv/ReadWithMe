@@ -67,6 +67,10 @@ export const useSpeechRecognition = ({
   const isStoppingRef = useRef(false);
   const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
 
+  useEffect(() => {
+    console.log('[useSpeechRecognition] Hook initialized, isSupported:', isSupported);
+  }, []);
+
   const matchWords = useCallback((spoken: string[], expected: string[]): number => {
     let count = 0;
     for (let i = 0; i < Math.min(spoken.length, expected.length); i++) {
@@ -138,24 +142,37 @@ export const useSpeechRecognition = ({
   }, [expectedWords, pageId]);
 
   const startListening = useCallback(() => {
+    console.log('[useSpeechRecognition] startListening called');
+    console.log('[useSpeechRecognition] isSupported:', isSupported);
+    console.log('[useSpeechRecognition] isListening:', isListening);
+    console.log('[useSpeechRecognition] isStartingRef.current:', isStartingRef.current);
+    console.log('[useSpeechRecognition] isStoppingRef.current:', isStoppingRef.current);
+
     if (!isSupported) {
+      console.log('[useSpeechRecognition] NOT SUPPORTED - returning');
       return;
     }
 
     if (isListening || isStartingRef.current) {
+      console.log('[useSpeechRecognition] Already listening or starting - returning');
       return;
     }
 
     if (isStoppingRef.current) {
+      console.log('[useSpeechRecognition] Currently stopping - returning');
       return;
     }
 
     isStartingRef.current = true;
     setError(null);
 
+    console.log('[useSpeechRecognition] Creating SpeechRecognition instance');
+
     try {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       const recognition = new SpeechRecognition();
+
+      console.log('[useSpeechRecognition] Recognition instance created');
 
       recognition.continuous = true;
       recognition.interimResults = true;
@@ -207,8 +224,10 @@ export const useSpeechRecognition = ({
         recognitionRef.current = null;
       };
 
+      console.log('[useSpeechRecognition] Calling recognition.start()');
       recognition.start();
       recognitionRef.current = recognition;
+      console.log('[useSpeechRecognition] recognition.start() called successfully');
 
     } catch (err) {
       console.error('[Speech] Start error:', err);

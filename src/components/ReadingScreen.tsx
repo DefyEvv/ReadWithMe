@@ -180,10 +180,13 @@ export const ReadingScreen = ({
             {isSupported && (
               <button
                 onClick={() => {
+                  console.log('[ReadingScreen] Mic button clicked, isListening:', isListening);
                   if (isListening) {
+                    console.log('[ReadingScreen] Stopping mic');
                     stopListening();
                     setListening(false);
                   } else {
+                    console.log('[ReadingScreen] Starting mic');
                     startListening();
                     setListening(true);
                   }
