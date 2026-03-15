@@ -65,7 +65,18 @@ export const useSpeechRecognition = ({
   const matchedCountRef = useRef<number>(0);
   const isStartingRef = useRef(false);
   const isStoppingRef = useRef(false);
+  const expectedWordsRef = useRef<string[]>(expectedWords);
+  const onProgressUpdateRef = useRef(onProgressUpdate);
   const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+
+  // Keep refs up to date
+  useEffect(() => {
+    expectedWordsRef.current = expectedWords;
+  }, [expectedWords]);
+
+  useEffect(() => {
+    onProgressUpdateRef.current = onProgressUpdate;
+  }, [onProgressUpdate]);
 
   useEffect(() => {
     console.log('[useSpeechRecognition] Hook initialized, isSupported:', isSupported);
@@ -84,8 +95,9 @@ export const useSpeechRecognition = ({
   }, []);
 
   const processTranscript = useCallback((fullTranscript: string) => {
+    const expected = expectedWordsRef.current;
     const spokenWords = normalizeText(fullTranscript);
-    const matchCount = matchWords(spokenWords, expectedWords);
+    const matchCount = matchWords(spokenWords, expected);
     const wasAdvanced = matchCount > matchedCountRef.current;
 
     if (wasAdvanced) {
@@ -95,20 +107,20 @@ export const useSpeechRecognition = ({
     setDebugInfo({
       rawTranscript: fullTranscript,
       normalizedWords: spokenWords,
-      expectedWords: expectedWords,
+      expectedWords: expected,
       matchedCount: matchCount,
       wasAdvanced,
       pageId
     });
 
-    onProgressUpdate(matchCount, fullTranscript, wasAdvanced);
+    onProgressUpdateRef.current(matchCount, fullTranscript, wasAdvanced);
 
-    if (matchCount === expectedWords.length && expectedWords.length > 0) {
+    if (matchCount === expected.length && expected.length > 0) {
       if (recognitionRef.current) {
         recognitionRef.current.stop();
       }
     }
-  }, [expectedWords, matchWords, onProgressUpdate, pageId]);
+  }, [matchWords, pageId]);
 
   const stopListening = useCallback(() => {
     if (isStoppingRef.current || !isListening) {
@@ -134,12 +146,12 @@ export const useSpeechRecognition = ({
     setDebugInfo({
       rawTranscript: '',
       normalizedWords: [],
-      expectedWords: expectedWords,
+      expectedWords: expectedWordsRef.current,
       matchedCount: 0,
       wasAdvanced: false,
       pageId
     });
-  }, [expectedWords, pageId]);
+  }, [pageId]);
 
   const startListening = useCallback(() => {
     console.log('[useSpeechRecognition] startListening called');
@@ -238,7 +250,10 @@ export const useSpeechRecognition = ({
     }
   }, [isSupported, isListening, processTranscript]);
 
+  // Reset when page changes (pageId dependency only)
   useEffect(() => {
+    console.log('[useSpeechRecognition] Page changed to:', pageId);
+
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -256,14 +271,6 @@ export const useSpeechRecognition = ({
     setError(null);
     setIsListening(false);
     setRecognitionStatus('idle');
-    setDebugInfo({
-      rawTranscript: '',
-      normalizedWords: [],
-      expectedWords: expectedWords,
-      matchedCount: 0,
-      wasAdvanced: false,
-      pageId
-    });
 
     return () => {
       if (recognitionRef.current) {
@@ -277,7 +284,7 @@ export const useSpeechRecognition = ({
       isStartingRef.current = false;
       isStoppingRef.current = false;
     };
-  }, [pageId, expectedWords]);
+  }, [pageId]);
 
   return {
     isListening,
