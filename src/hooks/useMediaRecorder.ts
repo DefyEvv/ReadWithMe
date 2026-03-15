@@ -96,7 +96,6 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
       const mediaRecorder = mediaRecorderRef.current!;
 
       mediaRecorder.onstop = async () => {
-        console.log('[MediaRecorder] Stopped recording');
         setStatus('processing');
 
         if (streamRef.current) {
@@ -105,8 +104,7 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
         }
 
         if (audioChunksRef.current.length === 0) {
-          console.warn('[MediaRecorder] No audio data captured');
-          setError('No audio was captured. Please try again.');
+          setError('No audio captured');
           setStatus('error');
           resolve(null);
           return;
@@ -127,20 +125,23 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
             formData.append('debugTranscript', debugTranscript.trim());
           }
 
-          const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/score-reading`;
+          console.log('[score-reading] file size:', audioBlob.size);
+          console.log('[score-reading] mime type:', audioBlob.type);
 
-          const response = await fetch(apiUrl, {
+          const response = await fetch('/api/score-reading', {
             method: 'POST',
-            headers: {
-              Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-            },
             body: formData,
           });
 
-          const data = await response.json().catch(() => ({}));
+          console.log('[score-reading] response status:', response.status);
+
+          const responseText = await response.text();
+          const data = responseText ? JSON.parse(responseText) : {};
 
           if (!response.ok) {
-            throw new Error(data.error || 'Failed to score reading');
+            const backendError = typeof data?.error === 'string' ? data.error : 'Unknown server error';
+            console.error('[score-reading] backend error text:', backendError);
+            throw new Error(backendError);
           }
 
           setStatus('idle');

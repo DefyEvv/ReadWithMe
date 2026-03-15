@@ -35,9 +35,7 @@ export type AppSettings = {
 
 export type ScoreReadingResponse = {
   transcript: string;
-  normalizedTranscriptWords: string[];
   expectedWords: string[];
-  previousMatchedCount: number;
   newMatchedCount: number;
   isComplete: boolean;
 };
