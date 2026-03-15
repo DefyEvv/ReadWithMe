@@ -57,7 +57,6 @@ export const ReadingScreen = ({
   const sentenceWords = currentPage.text.split(/\s+/);
   const expectedWords = sentenceWords.map(w => normalizeWord(w));
 
-  // Reset page state when page changes
   useEffect(() => {
     console.log(`[ReadingScreen] Page changed to ${currentPageIndex}`);
     console.log(`[ReadingScreen] Expected words:`, expectedWords);
@@ -73,7 +72,6 @@ export const ReadingScreen = ({
     console.log('[ReadingScreen] Spoken words:', spokenWords);
     console.log('[ReadingScreen] Expected words:', expectedWords);
 
-    // Forward-only matching: find how many consecutive words match from the start
     let newMatchCount = 0;
     for (let i = 0; i < Math.min(spokenWords.length, expectedWords.length); i++) {
       if (spokenWords[i] === expectedWords[i]) {
@@ -83,7 +81,6 @@ export const ReadingScreen = ({
       }
     }
 
-    // Never go backwards
     const finalMatchCount = Math.max(completedWords, newMatchCount);
 
     console.log('[ReadingScreen] Previous match count:', completedWords);
@@ -92,7 +89,6 @@ export const ReadingScreen = ({
 
     setCompletedWords(finalMatchCount);
 
-    // Update word states
     const newStates = expectedWords.map((_, index) => {
       if (index < finalMatchCount) return 'correct';
       if (index === finalMatchCount) return 'current';
@@ -101,7 +97,6 @@ export const ReadingScreen = ({
 
     setWordStates(newStates);
 
-    // Check if page is complete
     if (finalMatchCount === expectedWords.length && expectedWords.length > 0) {
       console.log('[ReadingScreen] Page complete!');
       onPageComplete(currentPageIndex);
@@ -110,7 +105,6 @@ export const ReadingScreen = ({
 
   const handleReadPage = async () => {
     if (isRecording) {
-      // Stop recording and get transcript
       try {
         const transcript = await stopRecording();
         setLastTranscript(transcript);
@@ -119,8 +113,35 @@ export const ReadingScreen = ({
         console.error('[ReadingScreen] Error stopping recording:', err);
       }
     } else {
-      // Start recording
       await startRecording();
+    }
+  };
+
+  const handleWordTap = (index: number) => {
+    if (settings.parentAssistMode) {
+      const newMatchCount = Math.max(completedWords, index + 1);
+      setCompletedWords(newMatchCount);
+
+      const newStates = expectedWords.map((_, i) => {
+        if (i < newMatchCount) return 'correct';
+        if (i === newMatchCount) return 'current';
+        return 'neutral';
+      });
+
+      setWordStates(newStates);
+
+      if (newMatchCount === expectedWords.length) {
+        console.log('[ReadingScreen] Page complete via tap!');
+        onPageComplete(currentPageIndex);
+      }
+    }
+
+    if (settings.soundEnabled) {
+      const utterance = new SpeechSynthesisUtterance(sentenceWords[index]);
+      utterance.rate = 0.8;
+      utterance.pitch = 1.1;
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(utterance);
     }
   };
 
@@ -142,10 +163,6 @@ export const ReadingScreen = ({
 
   const handleHearIt = () => {
     speakText(currentPage.text);
-  };
-
-  const handleWordClick = (word: string) => {
-    speakText(word);
   };
 
   const handleNextPage = () => {
@@ -176,20 +193,26 @@ export const ReadingScreen = ({
       case 'correct':
         return `${base} bg-green-300 text-green-900`;
       default:
-        return `${base} bg-gray-200 text-gray-600`;
+        return `${base} bg-gray-200 text-gray-600 hover:bg-gray-300 hover:scale-105`;
     }
   };
 
   const getStatusText = () => {
-    if (isRecording) return 'Recording... Tap to stop';
-    if (isProcessing) return 'Processing...';
+    if (settings.parentAssistMode) {
+      return 'Parent Assist Mode - Tap words to mark complete';
+    }
+    if (settings.experimentalVoiceMode) {
+      if (isRecording) return 'Recording... Tap to stop';
+      if (isProcessing) return 'Processing...';
+    }
     if (isPageComplete) return 'Complete!';
-    return 'Idle';
+    return 'Tap words to hear them • Tap Next when ready';
   };
 
   const getStatusColor = () => {
+    if (settings.parentAssistMode) return 'bg-blue-50 border-blue-400 text-blue-800';
     if (isRecording) return 'bg-red-50 border-red-400 text-red-800';
-    if (isProcessing) return 'bg-blue-50 border-blue-400 text-blue-800';
+    if (isProcessing) return 'bg-orange-50 border-orange-400 text-orange-800';
     if (isPageComplete) return 'bg-green-50 border-green-400 text-green-800';
     return 'bg-gray-50 border-gray-400 text-gray-800';
   };
@@ -223,28 +246,24 @@ export const ReadingScreen = ({
           </div>
         </div>
 
-        {!isSupported && (
-          <div className="bg-yellow-100 border-2 border-yellow-400 rounded-2xl p-4 mb-6">
-            <p className="text-yellow-800 font-semibold">
-              Audio recording is not supported in your browser. Tap Next to continue.
-            </p>
-          </div>
-        )}
-
-        {error && (
+        {error && settings.experimentalVoiceMode && (
           <div className="bg-red-100 border-2 border-red-400 rounded-2xl p-4 mb-6">
             <p className="text-red-800 font-semibold">{error}</p>
           </div>
         )}
 
         <div className={`border-2 rounded-2xl p-4 mb-6 ${getStatusColor()}`}>
-          <div className="flex items-center justify-between mb-2">
-            <p className="font-semibold flex items-center gap-2">
-              <Circle className={`w-3 h-3 ${isRecording ? 'fill-current animate-pulse' : ''}`} />
-              Status: {getStatusText()}
+          <div className="flex items-center justify-center mb-2">
+            <p className="font-semibold text-center flex items-center gap-2">
+              {settings.experimentalVoiceMode && isRecording && (
+                <Circle className="w-3 h-3 fill-current animate-pulse" />
+              )}
+              {getStatusText()}
             </p>
+          </div>
+          <div className="text-center">
             <p className="text-sm">
-              Progress: <span className="font-bold">{completedWords}/{expectedWords.length}</span>
+              Progress: <span className="font-bold">{completedWords}/{expectedWords.length}</span> words
             </p>
           </div>
         </div>
@@ -260,14 +279,21 @@ export const ReadingScreen = ({
               <p>Completed words: {completedWords}/{expectedWords.length}</p>
               <p>Page complete: {isPageComplete ? 'YES' : 'NO'}</p>
 
-              <p className="text-purple-400 font-bold border-b border-gray-600 pb-1 pt-2">RECORDING STATE</p>
-              <p>Status: {status.toUpperCase()}</p>
-              <p>Recording: {isRecording ? 'YES' : 'NO'}</p>
-              <p>Processing: {isProcessing ? 'YES' : 'NO'}</p>
+              <p className="text-purple-400 font-bold border-b border-gray-600 pb-1 pt-2">SETTINGS</p>
+              <p>Parent Assist: {settings.parentAssistMode ? 'ON' : 'OFF'}</p>
+              <p>Voice Mode: {settings.experimentalVoiceMode ? 'ON' : 'OFF'}</p>
+              <p>Sound: {settings.soundEnabled ? 'ON' : 'OFF'}</p>
 
-              <p className="text-green-400 font-bold border-b border-gray-600 pb-1 pt-2">TRANSCRIPT</p>
-              <p>Last transcript: {lastTranscript || '(none yet)'}</p>
-              <p>Normalized: [{normalizeText(lastTranscript).join(', ')}]</p>
+              {settings.experimentalVoiceMode && (
+                <>
+                  <p className="text-orange-400 font-bold border-b border-gray-600 pb-1 pt-2">VOICE STATE</p>
+                  <p>Status: {status.toUpperCase()}</p>
+                  <p>Recording: {isRecording ? 'YES' : 'NO'}</p>
+                  <p>Processing: {isProcessing ? 'YES' : 'NO'}</p>
+                  <p>Last transcript: {lastTranscript || '(none yet)'}</p>
+                  <p>Normalized: [{normalizeText(lastTranscript).join(', ')}]</p>
+                </>
+              )}
             </div>
           </div>
         )}
@@ -283,7 +309,7 @@ export const ReadingScreen = ({
                 <span
                   key={index}
                   className={getWordClassName(wordStates[index])}
-                  onClick={() => handleWordClick(word)}
+                  onClick={() => handleWordTap(index)}
                 >
                   {word}
                 </span>
@@ -293,7 +319,7 @@ export const ReadingScreen = ({
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          {isSupported && (
+          {settings.experimentalVoiceMode && isSupported && (
             <button
               onClick={handleReadPage}
               disabled={isProcessing}
@@ -302,11 +328,11 @@ export const ReadingScreen = ({
                   ? 'bg-red-500 text-white hover:shadow-xl hover:scale-105 animate-pulse'
                   : isProcessing
                   ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                  : 'bg-blue-500 text-white hover:shadow-xl hover:scale-105'
+                  : 'bg-orange-500 text-white hover:shadow-xl hover:scale-105'
               }`}
             >
               <Circle className={`w-5 h-5 ${isRecording ? 'fill-current' : ''}`} />
-              {isRecording ? 'Stop' : 'Read Page'}
+              {isRecording ? 'Stop' : 'Record'}
             </button>
           )}
 
@@ -320,7 +346,7 @@ export const ReadingScreen = ({
 
           <button
             onClick={handleResetPage}
-            className="flex items-center justify-center gap-2 px-4 py-3 bg-orange-500 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-bold"
+            className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-bold"
           >
             <RotateCcw className="w-5 h-5" />
             Reset
@@ -341,9 +367,9 @@ export const ReadingScreen = ({
 
           <button
             onClick={handleNextPage}
-            disabled={!isPageComplete && isSupported}
-            className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl shadow-lg font-bold transition-all ${
-              !isPageComplete && isSupported
+            disabled={!isPageComplete}
+            className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl shadow-lg font-bold transition-all col-span-2 md:col-span-1 ${
+              !isPageComplete
                 ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 : 'bg-green-500 text-white hover:shadow-xl hover:scale-105'
             }`}
@@ -355,7 +381,7 @@ export const ReadingScreen = ({
 
         {isPageComplete && (
           <div className="bg-gradient-to-r from-green-100 to-blue-100 rounded-2xl p-6 text-center">
-            <p className="text-2xl font-bold text-green-700">Great job! Ready for the next page!</p>
+            <p className="text-2xl font-bold text-green-700">Great job reading! Ready for the next page?</p>
           </div>
         )}
       </div>

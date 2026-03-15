@@ -1,5 +1,5 @@
 import { AppSettings, ReadingProgress } from '../types';
-import { X, RotateCcw, Mic, Volume2, Eye } from 'lucide-react';
+import { X, RotateCcw, Volume2, HandHelping, Lightbulb, Mic } from 'lucide-react';
 
 interface SettingsProps {
   settings: AppSettings;
@@ -39,26 +39,26 @@ export const Settings = ({ settings, progress, onUpdateSettings, onResetProgress
 
         <div className="space-y-6">
           <div className="bg-blue-50 rounded-2xl p-6">
-            <h3 className="text-xl font-bold text-gray-800 mb-4">Reading Features</h3>
+            <h3 className="text-xl font-bold text-gray-800 mb-4">Reading Mode</h3>
 
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <Mic className="w-5 h-5 text-blue-600" />
+                  <HandHelping className="w-5 h-5 text-blue-600" />
                   <div>
-                    <p className="font-semibold text-gray-800">Auto-Listening</p>
-                    <p className="text-sm text-gray-600">Start listening when page loads</p>
+                    <p className="font-semibold text-gray-800">Parent Assist Mode</p>
+                    <p className="text-sm text-gray-600">Tap words to mark them complete</p>
                   </div>
                 </div>
                 <button
-                  onClick={() => handleToggle('autoListening')}
+                  onClick={() => handleToggle('parentAssistMode')}
                   className={`w-14 h-8 rounded-full transition-all ${
-                    settings.autoListening ? 'bg-green-500' : 'bg-gray-300'
+                    settings.parentAssistMode ? 'bg-green-500' : 'bg-gray-300'
                   }`}
                 >
                   <div
                     className={`w-6 h-6 bg-white rounded-full shadow-md transition-transform ${
-                      settings.autoListening ? 'translate-x-7' : 'translate-x-1'
+                      settings.parentAssistMode ? 'translate-x-7' : 'translate-x-1'
                     }`}
                   />
                 </button>
@@ -66,21 +66,21 @@ export const Settings = ({ settings, progress, onUpdateSettings, onResetProgress
 
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <Eye className="w-5 h-5 text-blue-600" />
+                  <Lightbulb className="w-5 h-5 text-blue-600" />
                   <div>
-                    <p className="font-semibold text-gray-800">Show Incorrect Words</p>
-                    <p className="text-sm text-gray-600">Highlight mistakes in red</p>
+                    <p className="font-semibold text-gray-800">Show Word Hints</p>
+                    <p className="text-sm text-gray-600">Display visual hints for words</p>
                   </div>
                 </div>
                 <button
-                  onClick={() => handleToggle('showIncorrectWords')}
+                  onClick={() => handleToggle('showWordHints')}
                   className={`w-14 h-8 rounded-full transition-all ${
-                    settings.showIncorrectWords ? 'bg-green-500' : 'bg-gray-300'
+                    settings.showWordHints ? 'bg-green-500' : 'bg-gray-300'
                   }`}
                 >
                   <div
                     className={`w-6 h-6 bg-white rounded-full shadow-md transition-transform ${
-                      settings.showIncorrectWords ? 'translate-x-7' : 'translate-x-1'
+                      settings.showWordHints ? 'translate-x-7' : 'translate-x-1'
                     }`}
                   />
                 </button>
@@ -90,7 +90,7 @@ export const Settings = ({ settings, progress, onUpdateSettings, onResetProgress
                 <div className="flex items-center gap-3">
                   <Volume2 className="w-5 h-5 text-blue-600" />
                   <div>
-                    <p className="font-semibold text-gray-800">Sound Effects</p>
+                    <p className="font-semibold text-gray-800">Sound Enabled</p>
                     <p className="text-sm text-gray-600">Enable text-to-speech</p>
                   </div>
                 </div>
@@ -107,6 +107,44 @@ export const Settings = ({ settings, progress, onUpdateSettings, onResetProgress
                   />
                 </button>
               </div>
+            </div>
+          </div>
+
+          <div className="bg-orange-50 border-2 border-orange-300 rounded-2xl p-6">
+            <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+              <Mic className="w-5 h-5 text-orange-600" />
+              Experimental Features
+            </h3>
+
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div>
+                    <p className="font-semibold text-gray-800">Voice Recognition Mode</p>
+                    <p className="text-sm text-gray-600">Use microphone to track reading (may be unstable)</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleToggle('experimentalVoiceMode')}
+                  className={`w-14 h-8 rounded-full transition-all ${
+                    settings.experimentalVoiceMode ? 'bg-orange-500' : 'bg-gray-300'
+                  }`}
+                >
+                  <div
+                    className={`w-6 h-6 bg-white rounded-full shadow-md transition-transform ${
+                      settings.experimentalVoiceMode ? 'translate-x-7' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              {settings.experimentalVoiceMode && (
+                <div className="bg-orange-100 border border-orange-300 rounded-xl p-3">
+                  <p className="text-xs text-orange-800 font-semibold">
+                    Voice mode is experimental and may not work reliably across all browsers and devices.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
@@ -136,9 +174,9 @@ export const Settings = ({ settings, progress, onUpdateSettings, onResetProgress
           <div className="bg-gray-50 rounded-2xl p-6">
             <h3 className="text-xl font-bold text-gray-800 mb-3">About</h3>
             <p className="text-gray-600 text-sm leading-relaxed">
-              Read With Me helps early readers practice reading phonics-based books aloud.
-              The app uses speech recognition to track progress word by word, providing
-              gentle encouragement and support.
+              Read With Me helps early readers practice phonics-based books. Children can tap words
+              to hear them pronounced, read at their own pace, and build confidence. Parent Assist
+              mode lets you tap words to mark them complete as your child reads aloud to you.
             </p>
           </div>
         </div>

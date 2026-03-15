@@ -28,7 +28,8 @@ export type ReadingProgress = {
 };
 
 export type AppSettings = {
-  autoListening: boolean;
-  showIncorrectWords: boolean;
+  parentAssistMode: boolean;
+  showWordHints: boolean;
   soundEnabled: boolean;
+  experimentalVoiceMode: boolean;
 };
