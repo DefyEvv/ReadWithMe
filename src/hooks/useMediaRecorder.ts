@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react';
+import { ScoreReadingResponse } from '../types';
 
 type RecorderStatus = 'idle' | 'recording' | 'processing' | 'error';
 
@@ -9,7 +10,7 @@ interface UseMediaRecorderReturn {
   isProcessing: boolean;
   isSupported: boolean;
   startRecording: () => Promise<void>;
-  stopRecording: () => Promise<string>;
+  stopRecording: (expectedSentence: string, previousMatchedCount: number, debugTranscript?: string) => Promise<ScoreReadingResponse | null>;
 }
 
 export const useMediaRecorder = (): UseMediaRecorderReturn => {
@@ -82,9 +83,13 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
     }
   }, [isSupported]);
 
-  const stopRecording = useCallback(async (): Promise<string> => {
+  const stopRecording = useCallback(async (
+    expectedSentence: string,
+    previousMatchedCount: number,
+    debugTranscript?: string,
+  ): Promise<ScoreReadingResponse | null> => {
     if (!mediaRecorderRef.current || status !== 'recording') {
-      return '';
+      return null;
     }
 
     return new Promise((resolve) => {
@@ -103,7 +108,7 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
           console.warn('[MediaRecorder] No audio data captured');
           setError('No audio was captured. Please try again.');
           setStatus('error');
-          resolve('');
+          resolve(null);
           return;
         }
 
@@ -112,45 +117,40 @@ export const useMediaRecorder = (): UseMediaRecorderReturn => {
             type: mediaRecorder.mimeType
           });
 
-          console.log('[MediaRecorder] Audio blob created:', {
-            size: audioBlob.size,
-            type: audioBlob.type
-          });
-
           const formData = new FormData();
           const fileName = `audio.${mediaRecorder.mimeType.includes('webm') ? 'webm' : 'mp4'}`;
-          formData.append('audio', audioBlob, fileName);
+          formData.append('file', audioBlob, fileName);
+          formData.append('expectedSentence', expectedSentence);
+          formData.append('previousMatchedCount', String(previousMatchedCount));
 
-          const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe`;
+          if (debugTranscript?.trim()) {
+            formData.append('debugTranscript', debugTranscript.trim());
+          }
 
-          console.log('[MediaRecorder] Sending to transcription service...');
+          const apiUrl = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/score-reading`;
 
           const response = await fetch(apiUrl, {
             method: 'POST',
             headers: {
-              'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+              Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_ANON_KEY}`,
             },
             body: formData,
           });
 
+          const data = await response.json().catch(() => ({}));
+
           if (!response.ok) {
-            const errorData = await response.json().catch(() => ({}));
-            throw new Error(errorData.error || 'Transcription failed');
+            throw new Error(data.error || 'Failed to score reading');
           }
-
-          const data = await response.json();
-          const transcript = data.transcript || '';
-
-          console.log('[MediaRecorder] Transcription result:', transcript);
 
           setStatus('idle');
           setError(null);
-          resolve(transcript);
+          resolve(data as ScoreReadingResponse);
         } catch (err) {
-          console.error('[MediaRecorder] Transcription error:', err);
-          setError('Failed to process audio. Please try again.');
+          console.error('[MediaRecorder] Scoring error:', err);
+          setError(err instanceof Error ? err.message : 'Failed to process audio. Please try again.');
           setStatus('error');
-          resolve('');
+          resolve(null);
         }
       };
 

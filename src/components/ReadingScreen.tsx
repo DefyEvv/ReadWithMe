@@ -16,18 +16,6 @@ interface ReadingScreenProps {
 
 type WordState = 'neutral' | 'current' | 'correct';
 
-const normalizeWord = (word: string): string => {
-  return word.toLowerCase().trim().replace(/[.,!?;:"']/g, '');
-};
-
-const normalizeText = (text: string): string[] => {
-  return text
-    .toLowerCase()
-    .replace(/[.,!?;:"']/g, '')
-    .split(/\s+/)
-    .filter(w => w.length > 0);
-};
-
 export const ReadingScreen = ({
   book,
   initialPage,
@@ -38,14 +26,15 @@ export const ReadingScreen = ({
   onBookComplete
 }: ReadingScreenProps) => {
   const [currentPageIndex, setCurrentPageIndex] = useState(initialPage);
+  const [pageMatchedCounts, setPageMatchedCounts] = useState<number[]>(book.pages.map(() => 0));
   const [completedWords, setCompletedWords] = useState(0);
   const [wordStates, setWordStates] = useState<WordState[]>([]);
   const [lastTranscript, setLastTranscript] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
   const [animatingWords, setAnimatingWords] = useState(false);
+  const [debugTranscriptInput, setDebugTranscriptInput] = useState('');
 
   const {
-    status,
     error,
     isRecording,
     isProcessing,
@@ -56,76 +45,81 @@ export const ReadingScreen = ({
 
   const currentPage = book.pages[currentPageIndex];
   const sentenceWords = currentPage.text.split(/\s+/);
-  const expectedWords = sentenceWords.map(w => normalizeWord(w));
+  const expectedWordsLength = sentenceWords.length;
+  const isDebugMode = import.meta.env.DEV;
 
   useEffect(() => {
-    console.log(`[ReadingScreen] Page ${currentPageIndex + 1} loaded`);
-    setWordStates(expectedWords.map(() => 'neutral'));
-    setCompletedWords(0);
+    setPageMatchedCounts(book.pages.map(() => 0));
+    setCurrentPageIndex(initialPage);
+  }, [book.id, book.pages, initialPage]);
+
+  useEffect(() => {
+    const matchedCount = Math.min(pageMatchedCounts[currentPageIndex] ?? 0, expectedWordsLength);
+    setCompletedWords(matchedCount);
+
+    const pageWords = currentPage.text.split(/\s+/);
+    const newStates = pageWords.map((_, index) => {
+      if (index < matchedCount) return 'correct';
+      if (index === matchedCount) return 'current';
+      return 'neutral';
+    });
+
+    setWordStates(newStates);
     setLastTranscript('');
     setShowTranscript(false);
     setAnimatingWords(false);
-  }, [currentPageIndex]);
+  }, [currentPageIndex, pageMatchedCounts, expectedWordsLength, currentPage.text]);
 
-  const updateProgress = (transcript: string) => {
-    const spokenWords = normalizeText(transcript);
+  const applyMatchedCount = (newMatchedCount: number) => {
+    const clampedCount = Math.min(Math.max(newMatchedCount, completedWords), expectedWordsLength);
 
-    console.log('[Progress] Transcript:', transcript);
-    console.log('[Progress] Spoken:', spokenWords);
-    console.log('[Progress] Expected:', expectedWords);
-
-    let newMatchCount = 0;
-    for (let i = 0; i < Math.min(spokenWords.length, expectedWords.length); i++) {
-      if (spokenWords[i] === expectedWords[i]) {
-        newMatchCount = i + 1;
-      } else {
-        break;
-      }
-    }
-
-    const finalMatchCount = Math.max(completedWords, newMatchCount);
-
-    console.log('[Progress] Previous:', completedWords);
-    console.log('[Progress] New:', newMatchCount);
-    console.log('[Progress] Final:', finalMatchCount);
-
-    if (finalMatchCount > completedWords) {
+    if (clampedCount > completedWords) {
       setAnimatingWords(true);
       setTimeout(() => setAnimatingWords(false), 1000);
     }
 
-    setCompletedWords(finalMatchCount);
+    setCompletedWords(clampedCount);
 
-    const newStates = expectedWords.map((_, index) => {
-      if (index < finalMatchCount) return 'correct';
-      if (index === finalMatchCount) return 'current';
+    setPageMatchedCounts((previous) => {
+      const next = [...previous];
+      next[currentPageIndex] = clampedCount;
+      return next;
+    });
+
+    const pageWords = currentPage.text.split(/\s+/);
+    const newStates = pageWords.map((_, index) => {
+      if (index < clampedCount) return 'correct';
+      if (index === clampedCount) return 'current';
       return 'neutral';
     });
 
     setWordStates(newStates);
 
-    if (finalMatchCount === expectedWords.length && expectedWords.length > 0) {
-      console.log('[Progress] Page complete!');
+    if (clampedCount === expectedWordsLength && expectedWordsLength > 0) {
       onPageComplete(currentPageIndex);
     }
   };
 
   const handleStartReading = async () => {
-    console.log('[ReadingScreen] Start Reading clicked');
     setShowTranscript(false);
     setLastTranscript('');
     await startRecording();
   };
 
   const handleCheckReading = async () => {
-    console.log('[ReadingScreen] Check My Reading clicked');
-    const transcript = await stopRecording();
-    setLastTranscript(transcript);
-    setShowTranscript(true);
+    const score = await stopRecording(
+      currentPage.text,
+      completedWords,
+      isDebugMode ? debugTranscriptInput : undefined,
+    );
 
-    setTimeout(() => {
-      updateProgress(transcript);
-    }, 100);
+    if (!score) {
+      return;
+    }
+
+    setLastTranscript(score.transcript);
+    setShowTranscript(true);
+    applyMatchedCount(score.newMatchedCount);
   };
 
   const handleWordTap = (index: number) => {
@@ -139,9 +133,13 @@ export const ReadingScreen = ({
   };
 
   const handleResetPage = () => {
-    console.log('[ReadingScreen] Reset Page');
+    setPageMatchedCounts((previous) => {
+      const next = [...previous];
+      next[currentPageIndex] = 0;
+      return next;
+    });
     setCompletedWords(0);
-    setWordStates(expectedWords.map(() => 'neutral'));
+    setWordStates(sentenceWords.map((_, index) => (index === 0 ? 'current' : 'neutral')));
     setLastTranscript('');
     setShowTranscript(false);
     setAnimatingWords(false);
@@ -163,8 +161,6 @@ export const ReadingScreen = ({
   };
 
   const handleNextPage = () => {
-    console.log('[ReadingScreen] Next page');
-
     if (currentPageIndex < book.pages.length - 1) {
       setCurrentPageIndex(currentPageIndex + 1);
     } else {
@@ -173,16 +169,14 @@ export const ReadingScreen = ({
   };
 
   const handlePrevPage = () => {
-    console.log('[ReadingScreen] Previous page');
-
     if (currentPageIndex > 0) {
       setCurrentPageIndex(currentPageIndex - 1);
     }
   };
 
-  const isPageComplete = completedWords === expectedWords.length && expectedWords.length > 0;
+  const isPageComplete = completedWords === expectedWordsLength && expectedWordsLength > 0;
 
-  const getWordClassName = (state: WordState, index: number): string => {
+  const getWordClassName = (state: WordState): string => {
     const base = 'inline-block px-3 py-2 mx-1 my-1 rounded-xl transition-all duration-500 cursor-pointer text-3xl md:text-5xl font-bold';
     const animation = animatingWords && state === 'correct' ? 'animate-bounce' : '';
 
@@ -198,7 +192,7 @@ export const ReadingScreen = ({
 
   const getStatusText = () => {
     if (isRecording) return 'Listening... Read the sentence!';
-    if (isProcessing) return 'Processing what you said...';
+    if (isProcessing) return 'Scoring your reading...';
     if (isPageComplete) return 'Page Complete! Great reading!';
     if (showTranscript && lastTranscript) return 'Check your progress below';
     return 'Tap "Start Reading" when ready';
@@ -238,6 +232,22 @@ export const ReadingScreen = ({
           </div>
         )}
 
+        {isDebugMode && (
+          <div className="bg-purple-100 border-2 border-purple-300 rounded-2xl p-4 mb-6">
+            <label className="block text-sm font-semibold text-purple-900 mb-2" htmlFor="debugTranscript">
+              Debug transcript override (dev only)
+            </label>
+            <input
+              id="debugTranscript"
+              type="text"
+              value={debugTranscriptInput}
+              onChange={(event) => setDebugTranscriptInput(event.target.value)}
+              className="w-full px-4 py-2 rounded-xl border border-purple-300"
+              placeholder="Type transcript to bypass live transcription"
+            />
+          </div>
+        )}
+
         <div className={`border-2 rounded-2xl p-4 mb-6 ${getStatusColor()}`}>
           <div className="flex items-center justify-center mb-2">
             <p className="font-semibold text-center flex items-center gap-2">
@@ -247,15 +257,15 @@ export const ReadingScreen = ({
           </div>
           <div className="text-center">
             <p className="text-sm">
-              Progress: <span className="font-bold">{completedWords}/{expectedWords.length}</span> words
+              Progress: <span className="font-bold">{completedWords}/{expectedWordsLength}</span> words
             </p>
           </div>
         </div>
 
-        {settings.showTranscript && showTranscript && lastTranscript && (
+        {settings.showTranscript && showTranscript && (
           <div className="bg-white border-2 border-blue-400 rounded-2xl p-4 mb-6">
             <p className="text-sm font-semibold text-gray-600 mb-2">What I heard:</p>
-            <p className="text-lg text-blue-800 font-medium">{lastTranscript}</p>
+            <p className="text-lg text-blue-800 font-medium">{lastTranscript || '(no transcript)'}</p>
           </div>
         )}
 
@@ -269,7 +279,7 @@ export const ReadingScreen = ({
               {sentenceWords.map((word, index) => (
                 <span
                   key={index}
-                  className={getWordClassName(wordStates[index], index)}
+                  className={getWordClassName(wordStates[index])}
                   onClick={() => handleWordTap(index)}
                 >
                   {word}
@@ -356,7 +366,7 @@ export const ReadingScreen = ({
         {isPageComplete && (
           <div className="bg-gradient-to-r from-green-100 to-blue-100 rounded-2xl p-6 text-center">
             <p className="text-2xl font-bold text-green-700">
-              Excellent work! You read all {expectedWords.length} words correctly!
+              Excellent work! You read all {expectedWordsLength} words correctly!
             </p>
           </div>
         )}
