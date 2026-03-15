@@ -31,11 +31,3 @@ export type AppSettings = {
   soundEnabled: boolean;
   showTranscript: boolean;
 };
-
-
-export type ScoreReadingResponse = {
-  transcript: string;
-  expectedWords: string[];
-  newMatchedCount: number;
-  isComplete: boolean;
-};

@@ -1,301 +1,210 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 type RecognitionStatus = 'idle' | 'listening' | 'stopped' | 'error';
 
-interface UseSpeechRecognitionProps {
-  expectedWords: string[];
-  onProgressUpdate: (completedWordCount: number, transcript: string, wasAdvanced: boolean) => void;
-  enabled: boolean;
+interface SpeechRecognitionResultAlternativeLike {
+  transcript: string;
+}
+
+interface SpeechRecognitionResultLike {
+  isFinal: boolean;
+  0: SpeechRecognitionResultAlternativeLike;
+}
+
+interface SpeechRecognitionEventLike {
+  resultIndex: number;
+  results: ArrayLike<SpeechRecognitionResultLike>;
+}
+
+interface SpeechRecognitionErrorEventLike {
+  error: string;
+}
+
+interface SpeechRecognitionLike {
+  continuous: boolean;
+  interimResults: boolean;
+  lang: string;
+  onstart: (() => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+  stop: () => void;
+}
+
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+interface UseSpeechRecognitionOptions {
   pageId: string | number;
 }
 
 interface UseSpeechRecognitionReturn {
   isListening: boolean;
   isSupported: boolean;
-  startListening: () => void;
-  stopListening: () => void;
-  resetListening: () => void;
-  transcript: string;
-  normalizedTranscript: string;
+  interimTranscript: string;
+  finalTranscript: string;
   error: string | null;
-  recognitionStatus: RecognitionStatus;
-  debugInfo: {
-    rawTranscript: string;
-    normalizedWords: string[];
-    expectedWords: string[];
-    matchedCount: number;
-    wasAdvanced: boolean;
-    pageId: string | number;
-  };
+  status: RecognitionStatus;
+  startListening: () => void;
+  stopListening: () => Promise<string>;
+  resetSession: () => void;
 }
 
-const normalizeWord = (word: string): string => {
-  return word.toLowerCase().trim().replace(/[.,!?;:"']/g, '');
+const getSpeechRecognitionConstructor = (): SpeechRecognitionConstructor | null => {
+  const maybeWindow = window as Window & {
+    webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    SpeechRecognition?: SpeechRecognitionConstructor;
+  };
+
+  return maybeWindow.SpeechRecognition || maybeWindow.webkitSpeechRecognition || null;
 };
 
-const normalizeText = (text: string): string[] => {
-  return text
-    .toLowerCase()
-    .split(/\s+/)
-    .map(w => normalizeWord(w))
-    .filter(w => w.length > 0);
-};
-
-export const useSpeechRecognition = ({
-  expectedWords,
-  onProgressUpdate,
-  enabled,
-  pageId
-}: UseSpeechRecognitionProps): UseSpeechRecognitionReturn => {
+export const useSpeechRecognition = ({ pageId }: UseSpeechRecognitionOptions): UseSpeechRecognitionReturn => {
   const [isListening, setIsListening] = useState(false);
-  const [transcript, setTranscript] = useState('');
-  const [normalizedTranscript, setNormalizedTranscript] = useState('');
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [finalTranscript, setFinalTranscript] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [recognitionStatus, setRecognitionStatus] = useState<RecognitionStatus>('idle');
-  const [debugInfo, setDebugInfo] = useState({
-    rawTranscript: '',
-    normalizedWords: [] as string[],
-    expectedWords: [] as string[],
-    matchedCount: 0,
-    wasAdvanced: false,
-    pageId: pageId
-  });
+  const [status, setStatus] = useState<RecognitionStatus>('idle');
 
-  const recognitionRef = useRef<any>(null);
-  const matchedCountRef = useRef<number>(0);
-  const isStartingRef = useRef(false);
-  const isStoppingRef = useRef(false);
-  const expectedWordsRef = useRef<string[]>(expectedWords);
-  const onProgressUpdateRef = useRef(onProgressUpdate);
-  const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const finalTranscriptRef = useRef('');
+  const stopResolveRef = useRef<((value: string) => void) | null>(null);
 
-  // Keep refs up to date
-  useEffect(() => {
-    expectedWordsRef.current = expectedWords;
-  }, [expectedWords]);
+  const isSupported = typeof window !== 'undefined' && getSpeechRecognitionConstructor() !== null;
 
-  useEffect(() => {
-    onProgressUpdateRef.current = onProgressUpdate;
-  }, [onProgressUpdate]);
-
-  useEffect(() => {
-    console.log('[useSpeechRecognition] Hook initialized, isSupported:', isSupported);
-  }, []);
-
-  const matchWords = useCallback((spoken: string[], expected: string[]): number => {
-    let count = 0;
-    for (let i = 0; i < Math.min(spoken.length, expected.length); i++) {
-      if (spoken[i] === expected[i]) {
-        count = i + 1;
-      } else {
-        break;
-      }
-    }
-    return count;
-  }, []);
-
-  const processTranscript = useCallback((fullTranscript: string) => {
-    const expected = expectedWordsRef.current;
-    const spokenWords = normalizeText(fullTranscript);
-    const matchCount = matchWords(spokenWords, expected);
-    const wasAdvanced = matchCount > matchedCountRef.current;
-
-    if (wasAdvanced) {
-      matchedCountRef.current = matchCount;
-    }
-
-    setDebugInfo({
-      rawTranscript: fullTranscript,
-      normalizedWords: spokenWords,
-      expectedWords: expected,
-      matchedCount: matchCount,
-      wasAdvanced,
-      pageId
-    });
-
-    onProgressUpdateRef.current(matchCount, fullTranscript, wasAdvanced);
-
-    if (matchCount === expected.length && expected.length > 0) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-    }
-  }, [matchWords, pageId]);
-
-  const stopListening = useCallback(() => {
-    if (isStoppingRef.current || !isListening) {
-      return;
-    }
-
-    isStoppingRef.current = true;
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        console.log('[Speech] Error stopping:', e);
-      }
-    }
-  }, [isListening]);
-
-  const resetListening = useCallback(() => {
-    matchedCountRef.current = 0;
-    setTranscript('');
-    setNormalizedTranscript('');
+  const resetSession = useCallback(() => {
+    setInterimTranscript('');
+    setFinalTranscript('');
+    finalTranscriptRef.current = '';
     setError(null);
-    setDebugInfo({
-      rawTranscript: '',
-      normalizedWords: [],
-      expectedWords: expectedWordsRef.current,
-      matchedCount: 0,
-      wasAdvanced: false,
-      pageId
-    });
-  }, [pageId]);
+    setStatus('idle');
+  }, []);
 
   const startListening = useCallback(() => {
-    console.log('[useSpeechRecognition] startListening called');
-    console.log('[useSpeechRecognition] isSupported:', isSupported);
-    console.log('[useSpeechRecognition] isListening:', isListening);
-    console.log('[useSpeechRecognition] isStartingRef.current:', isStartingRef.current);
-    console.log('[useSpeechRecognition] isStoppingRef.current:', isStoppingRef.current);
-
-    if (!isSupported) {
-      console.log('[useSpeechRecognition] NOT SUPPORTED - returning');
+    if (!isSupported || recognitionRef.current) {
       return;
     }
 
-    if (isListening || isStartingRef.current) {
-      console.log('[useSpeechRecognition] Already listening or starting - returning');
+    const SpeechRecognitionClass = getSpeechRecognitionConstructor();
+    if (!SpeechRecognitionClass) {
+      setError('Speech recognition is not supported in this browser');
+      setStatus('error');
       return;
     }
 
-    if (isStoppingRef.current) {
-      console.log('[useSpeechRecognition] Currently stopping - returning');
-      return;
-    }
+    const recognition = new SpeechRecognitionClass();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
 
-    isStartingRef.current = true;
+    setInterimTranscript('');
+    setFinalTranscript('');
+    finalTranscriptRef.current = '';
     setError(null);
 
-    console.log('[useSpeechRecognition] Creating SpeechRecognition instance');
+    recognition.onstart = () => {
+      setIsListening(true);
+      setStatus('listening');
+    };
 
-    try {
-      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
+    recognition.onresult = (event: SpeechRecognitionEventLike) => {
+      let sessionFinalTranscript = '';
+      let sessionInterimTranscript = '';
 
-      console.log('[useSpeechRecognition] Recognition instance created');
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        const segment = result?.[0]?.transcript ?? '';
 
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-
-      recognition.onstart = () => {
-        isStartingRef.current = false;
-        setIsListening(true);
-        setRecognitionStatus('listening');
-      };
-
-      recognition.onresult = (event: any) => {
-        let finalTranscript = '';
-        let interimTranscript = '';
-
-        for (let i = 0; i < event.results.length; i++) {
-          const result = event.results[i];
-          if (result.isFinal) {
-            finalTranscript += result[0].transcript + ' ';
-          } else {
-            interimTranscript += result[0].transcript;
-          }
+        if (result?.isFinal) {
+          sessionFinalTranscript += `${segment} `;
+        } else {
+          sessionInterimTranscript += segment;
         }
-
-        const combined = (finalTranscript + ' ' + interimTranscript).trim();
-        setTranscript(combined);
-        setNormalizedTranscript(normalizeText(combined).join(' '));
-        processTranscript(combined);
-      };
-
-      recognition.onerror = (event: any) => {
-        console.error('[Speech] Error:', event.error);
-
-        if (event.error === 'not-allowed') {
-          setError('Microphone access denied');
-          setRecognitionStatus('error');
-        } else if (event.error !== 'aborted' && event.error !== 'no-speech') {
-          setError(`Error: ${event.error}`);
-        }
-
-        isStartingRef.current = false;
-      };
-
-      recognition.onend = () => {
-        isStartingRef.current = false;
-        isStoppingRef.current = false;
-        setIsListening(false);
-        setRecognitionStatus('stopped');
-        recognitionRef.current = null;
-      };
-
-      console.log('[useSpeechRecognition] Calling recognition.start()');
-      recognition.start();
-      recognitionRef.current = recognition;
-      console.log('[useSpeechRecognition] recognition.start() called successfully');
-
-    } catch (err) {
-      console.error('[Speech] Start error:', err);
-      setError('Could not start speech recognition');
-      setIsListening(false);
-      setRecognitionStatus('error');
-      isStartingRef.current = false;
-    }
-  }, [isSupported, isListening, processTranscript]);
-
-  // Reset when page changes (pageId dependency only)
-  useEffect(() => {
-    console.log('[useSpeechRecognition] Page changed to:', pageId);
-
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.stop();
-      } catch (e) {
-        console.log('[Speech] Error stopping on page change:', e);
       }
+
+      if (sessionFinalTranscript) {
+        finalTranscriptRef.current = `${finalTranscriptRef.current}${sessionFinalTranscript}`.trim();
+        setFinalTranscript(finalTranscriptRef.current);
+      }
+
+      setInterimTranscript(sessionInterimTranscript.trim());
+    };
+
+    recognition.onerror = (event: SpeechRecognitionErrorEventLike) => {
+      if (event.error === 'aborted') {
+        return;
+      }
+
+      if (event.error === 'not-allowed') {
+        setError('Microphone access denied');
+      } else if (event.error === 'no-speech') {
+        setError('No speech detected. Try again.');
+      } else {
+        setError(`Speech recognition error: ${event.error}`);
+      }
+
+      setStatus('error');
+    };
+
+    recognition.onend = () => {
+      setIsListening(false);
+      setStatus((currentStatus) => (currentStatus === 'error' ? 'error' : 'stopped'));
       recognitionRef.current = null;
+
+      if (stopResolveRef.current) {
+        stopResolveRef.current(finalTranscriptRef.current.trim());
+        stopResolveRef.current = null;
+      }
+
+      setInterimTranscript('');
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
+  }, [isSupported]);
+
+  const stopListening = useCallback((): Promise<string> => {
+    return new Promise((resolve) => {
+      if (!recognitionRef.current || !isListening) {
+        resolve(finalTranscriptRef.current.trim());
+        return;
+      }
+
+      stopResolveRef.current = resolve;
+      recognitionRef.current.stop();
+    });
+  }, [isListening]);
+
+  useEffect(() => {
+    if (recognitionRef.current) {
+      recognitionRef.current.stop();
     }
 
-    isStartingRef.current = false;
-    isStoppingRef.current = false;
-    matchedCountRef.current = 0;
-    setTranscript('');
-    setNormalizedTranscript('');
-    setError(null);
-    setIsListening(false);
-    setRecognitionStatus('idle');
+    resetSession();
+  }, [pageId, resetSession]);
 
+  useEffect(() => {
     return () => {
       if (recognitionRef.current) {
-        try {
-          recognitionRef.current.stop();
-        } catch (e) {
-          console.log('[Speech] Cleanup error:', e);
-        }
-        recognitionRef.current = null;
+        recognitionRef.current.stop();
       }
-      isStartingRef.current = false;
-      isStoppingRef.current = false;
+
+      if (stopResolveRef.current) {
+        stopResolveRef.current(finalTranscriptRef.current.trim());
+        stopResolveRef.current = null;
+      }
     };
-  }, [pageId]);
+  }, []);
 
   return {
     isListening,
     isSupported,
+    interimTranscript,
+    finalTranscript,
+    error,
+    status,
     startListening,
     stopListening,
-    resetListening,
-    transcript,
-    normalizedTranscript,
-    error,
-    recognitionStatus,
-    debugInfo
+    resetSession,
   };
 };

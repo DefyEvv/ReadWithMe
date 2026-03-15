@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BookLevel, AppSettings } from '../types';
-import { useMediaRecorder } from '../hooks/useMediaRecorder';
+import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { BookIllustration } from './BookIllustration';
 import { ArrowLeft, ArrowRight, Volume2, Circle, RotateCcw, Mic, CheckCircle2 } from 'lucide-react';
 
@@ -15,6 +15,16 @@ interface ReadingScreenProps {
 }
 
 type WordState = 'neutral' | 'current' | 'correct';
+
+const normalizeText = (text: string): string[] => {
+  return text
+    .toLowerCase()
+    .replace(/[.,!?;:"']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .split(' ')
+    .filter(Boolean);
+};
 
 export const ReadingScreen = ({
   book,
@@ -32,21 +42,24 @@ export const ReadingScreen = ({
   const [lastTranscript, setLastTranscript] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
   const [animatingWords, setAnimatingWords] = useState(false);
-  const [debugTranscriptInput, setDebugTranscriptInput] = useState('');
-
-  const {
-    error,
-    isRecording,
-    isProcessing,
-    isSupported,
-    startRecording,
-    stopRecording,
-  } = useMediaRecorder();
 
   const currentPage = book.pages[currentPageIndex];
   const sentenceWords = currentPage.text.split(/\s+/);
-  const expectedWordsLength = sentenceWords.length;
-  const isDebugMode = import.meta.env.DEV;
+  const expectedWords = normalizeText(currentPage.text);
+
+  const {
+    isListening,
+    isSupported,
+    interimTranscript,
+    finalTranscript,
+    error,
+    status,
+    startListening,
+    stopListening,
+    resetSession,
+  } = useSpeechRecognition({
+    pageId: `${book.id}-${currentPageIndex}`,
+  });
 
   useEffect(() => {
     setPageMatchedCounts(book.pages.map(() => 0));
@@ -54,11 +67,10 @@ export const ReadingScreen = ({
   }, [book.id, book.pages, initialPage]);
 
   useEffect(() => {
-    const matchedCount = Math.min(pageMatchedCounts[currentPageIndex] ?? 0, expectedWordsLength);
+    const matchedCount = Math.min(pageMatchedCounts[currentPageIndex] ?? 0, expectedWords.length);
     setCompletedWords(matchedCount);
 
-    const pageWords = currentPage.text.split(/\s+/);
-    const newStates = pageWords.map((_, index) => {
+    const newStates = sentenceWords.map((_, index) => {
       if (index < matchedCount) return 'correct';
       if (index === matchedCount) return 'current';
       return 'neutral';
@@ -68,62 +80,68 @@ export const ReadingScreen = ({
     setLastTranscript('');
     setShowTranscript(false);
     setAnimatingWords(false);
-  }, [currentPageIndex, pageMatchedCounts, expectedWordsLength, currentPage.text]);
+    resetSession();
+  }, [currentPageIndex, pageMatchedCounts, expectedWords.length, sentenceWords, resetSession]);
 
-  const applyMatchedCount = (newMatchedCount: number) => {
-    const clampedCount = Math.min(Math.max(newMatchedCount, completedWords), expectedWordsLength);
+  const applyMatchedCount = (nextMatchedCount: number) => {
+    const finalMatchedCount = Math.max(completedWords, Math.min(nextMatchedCount, expectedWords.length));
 
-    if (clampedCount > completedWords) {
+    if (finalMatchedCount > completedWords) {
       setAnimatingWords(true);
       setTimeout(() => setAnimatingWords(false), 1000);
     }
 
-    setCompletedWords(clampedCount);
+    setCompletedWords(finalMatchedCount);
 
     setPageMatchedCounts((previous) => {
       const next = [...previous];
-      next[currentPageIndex] = clampedCount;
+      next[currentPageIndex] = finalMatchedCount;
       return next;
     });
 
-    const pageWords = currentPage.text.split(/\s+/);
-    const newStates = pageWords.map((_, index) => {
-      if (index < clampedCount) return 'correct';
-      if (index === clampedCount) return 'current';
+    const newStates = sentenceWords.map((_, index) => {
+      if (index < finalMatchedCount) return 'correct';
+      if (index === finalMatchedCount) return 'current';
       return 'neutral';
     });
-
     setWordStates(newStates);
 
-    if (clampedCount === expectedWordsLength && expectedWordsLength > 0) {
+    if (finalMatchedCount === expectedWords.length && expectedWords.length > 0) {
       onPageComplete(currentPageIndex);
     }
   };
 
-  const handleStartReading = async () => {
+  const scoreTranscript = (transcript: string) => {
+    const spokenWords = normalizeText(transcript);
+    let detectedMatchedCount = completedWords;
+
+    for (let index = completedWords; index < expectedWords.length; index += 1) {
+      if (spokenWords[index] === expectedWords[index]) {
+        detectedMatchedCount = index + 1;
+      } else {
+        break;
+      }
+    }
+
+    const newMatchedCount = Math.max(completedWords, detectedMatchedCount);
+    applyMatchedCount(newMatchedCount);
+  };
+
+  const handleStartReading = () => {
     setShowTranscript(false);
     setLastTranscript('');
-    await startRecording();
+    startListening();
   };
 
   const handleCheckReading = async () => {
-    const score = await stopRecording(
-      currentPage.text,
-      completedWords,
-      isDebugMode ? debugTranscriptInput : undefined,
-    );
-
-    if (!score) {
-      return;
-    }
-
-    setLastTranscript(score.transcript);
+    const transcript = await stopListening();
+    setLastTranscript(transcript);
     setShowTranscript(true);
-    applyMatchedCount(score.newMatchedCount);
+    scoreTranscript(transcript);
   };
 
   const handleWordTap = (index: number) => {
-    if (settings.soundEnabled && !isRecording) {
+    if (settings.soundEnabled && !isListening) {
       const utterance = new SpeechSynthesisUtterance(sentenceWords[index]);
       utterance.rate = 0.8;
       utterance.pitch = 1.1;
@@ -143,6 +161,7 @@ export const ReadingScreen = ({
     setLastTranscript('');
     setShowTranscript(false);
     setAnimatingWords(false);
+    resetSession();
   };
 
   const speakText = (text: string) => {
@@ -155,7 +174,7 @@ export const ReadingScreen = ({
   };
 
   const handleHearIt = () => {
-    if (!isRecording) {
+    if (!isListening) {
       speakText(currentPage.text);
     }
   };
@@ -174,7 +193,7 @@ export const ReadingScreen = ({
     }
   };
 
-  const isPageComplete = completedWords === expectedWordsLength && expectedWordsLength > 0;
+  const isPageComplete = completedWords === expectedWords.length && expectedWords.length > 0;
 
   const getWordClassName = (state: WordState): string => {
     const base = 'inline-block px-3 py-2 mx-1 my-1 rounded-xl transition-all duration-500 cursor-pointer text-3xl md:text-5xl font-bold';
@@ -191,16 +210,16 @@ export const ReadingScreen = ({
   };
 
   const getStatusText = () => {
-    if (isRecording) return 'Listening... Read the sentence!';
-    if (isProcessing) return 'Scoring your reading...';
+    if (isListening) return 'Listening... Read the sentence!';
+    if (status === 'error') return 'Speech recognition had a problem. Please try again.';
     if (isPageComplete) return 'Page Complete! Great reading!';
-    if (showTranscript && lastTranscript) return 'Check your progress below';
+    if (showTranscript) return 'Check your progress below';
     return 'Tap "Start Reading" when ready';
   };
 
   const getStatusColor = () => {
-    if (isRecording) return 'bg-red-50 border-red-400 text-red-800';
-    if (isProcessing) return 'bg-orange-50 border-orange-400 text-orange-800';
+    if (isListening) return 'bg-red-50 border-red-400 text-red-800';
+    if (status === 'error') return 'bg-red-50 border-red-400 text-red-800';
     if (isPageComplete) return 'bg-green-50 border-green-400 text-green-800';
     if (showTranscript) return 'bg-blue-50 border-blue-400 text-blue-800';
     return 'bg-gray-50 border-gray-400 text-gray-800';
@@ -212,7 +231,7 @@ export const ReadingScreen = ({
         <div className="flex justify-between items-center mb-6">
           <button
             onClick={onBack}
-            disabled={isRecording || isProcessing}
+            disabled={isListening}
             className="flex items-center gap-2 px-4 py-3 bg-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -232,33 +251,20 @@ export const ReadingScreen = ({
           </div>
         )}
 
-        {isDebugMode && (
-          <div className="bg-purple-100 border-2 border-purple-300 rounded-2xl p-4 mb-6">
-            <label className="block text-sm font-semibold text-purple-900 mb-2" htmlFor="debugTranscript">
-              Debug transcript override (dev only)
-            </label>
-            <input
-              id="debugTranscript"
-              type="text"
-              value={debugTranscriptInput}
-              onChange={(event) => setDebugTranscriptInput(event.target.value)}
-              className="w-full px-4 py-2 rounded-xl border border-purple-300"
-              placeholder="Type transcript to bypass live transcription"
-            />
-          </div>
-        )}
-
         <div className={`border-2 rounded-2xl p-4 mb-6 ${getStatusColor()}`}>
           <div className="flex items-center justify-center mb-2">
             <p className="font-semibold text-center flex items-center gap-2">
-              {isRecording && <Circle className="w-3 h-3 fill-current animate-pulse" />}
+              {isListening && <Circle className="w-3 h-3 fill-current animate-pulse" />}
               {getStatusText()}
             </p>
           </div>
           <div className="text-center">
             <p className="text-sm">
-              Progress: <span className="font-bold">{completedWords}/{expectedWordsLength}</span> words
+              Progress: <span className="font-bold">{completedWords}/{expectedWords.length}</span> words
             </p>
+            {isListening && interimTranscript && (
+              <p className="text-sm mt-2 opacity-80">Hearing: {`${finalTranscript} ${interimTranscript}`.trim()}</p>
+            )}
           </div>
         </div>
 
@@ -290,7 +296,7 @@ export const ReadingScreen = ({
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-          {!isRecording && !isProcessing && (
+          {!isListening && (
             <button
               onClick={handleStartReading}
               disabled={!isSupported}
@@ -301,7 +307,7 @@ export const ReadingScreen = ({
             </button>
           )}
 
-          {isRecording && (
+          {isListening && (
             <button
               onClick={handleCheckReading}
               className="flex items-center justify-center gap-2 px-6 py-4 bg-red-500 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-bold text-lg animate-pulse"
@@ -311,16 +317,9 @@ export const ReadingScreen = ({
             </button>
           )}
 
-          {isProcessing && (
-            <div className="flex items-center justify-center gap-2 px-6 py-4 bg-orange-400 text-white rounded-2xl shadow-lg font-bold text-lg">
-              <Circle className="w-6 h-6 animate-spin" />
-              Processing...
-            </div>
-          )}
-
           <button
             onClick={handleHearIt}
-            disabled={isRecording}
+            disabled={isListening}
             className="flex items-center justify-center gap-2 px-4 py-3 bg-green-500 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <Volume2 className="w-5 h-5" />
@@ -329,7 +328,7 @@ export const ReadingScreen = ({
 
           <button
             onClick={handleResetPage}
-            disabled={isRecording || isProcessing}
+            disabled={isListening}
             className="flex items-center justify-center gap-2 px-4 py-3 bg-blue-500 text-white rounded-2xl shadow-lg hover:shadow-xl transition-all hover:scale-105 font-bold disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <RotateCcw className="w-5 h-5" />
@@ -338,9 +337,9 @@ export const ReadingScreen = ({
 
           <button
             onClick={handlePrevPage}
-            disabled={currentPageIndex === 0 || isRecording || isProcessing}
+            disabled={currentPageIndex === 0 || isListening}
             className={`flex items-center justify-center gap-2 px-4 py-3 rounded-2xl shadow-lg font-bold transition-all ${
-              currentPageIndex === 0 || isRecording || isProcessing
+              currentPageIndex === 0 || isListening
                 ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 : 'bg-white text-gray-700 hover:shadow-xl hover:scale-105'
             }`}
@@ -351,9 +350,9 @@ export const ReadingScreen = ({
 
           <button
             onClick={handleNextPage}
-            disabled={!isPageComplete || isRecording || isProcessing}
+            disabled={!isPageComplete || isListening}
             className={`flex items-center justify-center gap-2 px-6 py-4 rounded-2xl shadow-lg font-bold transition-all text-lg col-span-2 md:col-span-1 ${
-              !isPageComplete || isRecording || isProcessing
+              !isPageComplete || isListening
                 ? 'bg-gray-200 text-gray-400 cursor-not-allowed'
                 : 'bg-green-500 text-white hover:shadow-xl hover:scale-105'
             }`}
@@ -366,7 +365,7 @@ export const ReadingScreen = ({
         {isPageComplete && (
           <div className="bg-gradient-to-r from-green-100 to-blue-100 rounded-2xl p-6 text-center">
             <p className="text-2xl font-bold text-green-700">
-              Excellent work! You read all {expectedWordsLength} words correctly!
+              Excellent work! You read all {expectedWords.length} words correctly!
             </p>
           </div>
         )}
@@ -374,7 +373,7 @@ export const ReadingScreen = ({
         {!isSupported && (
           <div className="bg-yellow-100 border-2 border-yellow-400 rounded-2xl p-4 mt-6">
             <p className="text-yellow-800 font-semibold text-center">
-              Voice recording is not supported in this browser. Please use a modern browser like Chrome, Edge, or Safari.
+              Speech recognition is not supported in this browser. Please use Chrome, Edge, or Safari.
             </p>
           </div>
         )}
