@@ -222,12 +222,25 @@ export const ReadingScreen = ({
           </div>
         )}
 
-        {isListening && (
-          <div className="bg-green-50 border-2 border-green-400 rounded-2xl p-4 mb-6">
+        {isSupported && listening && (
+          <div className={`border-2 rounded-2xl p-4 mb-6 ${
+            isListening
+              ? 'bg-green-50 border-green-400'
+              : recognitionStatus === 'starting'
+              ? 'bg-yellow-50 border-yellow-400'
+              : 'bg-gray-50 border-gray-400'
+          }`}>
             <div className="flex items-center justify-between mb-2">
-              <p className="text-green-800 font-semibold flex items-center gap-2">
-                <Mic className="w-5 h-5 animate-pulse" />
-                Listening for: <span className="font-mono">{expectedWords.join(' ')}</span>
+              <p className={`font-semibold flex items-center gap-2 ${
+                isListening ? 'text-green-800' : 'text-gray-700'
+              }`}>
+                <Mic className={`w-5 h-5 ${isListening ? 'animate-pulse' : ''}`} />
+                {recognitionStatus === 'starting' && 'Starting microphone...'}
+                {recognitionStatus === 'listening' && `Listening for: ${expectedWords.join(' ')}`}
+                {recognitionStatus === 'stopping' && 'Stopping...'}
+                {recognitionStatus === 'stopped' && 'Stopped'}
+                {recognitionStatus === 'idle' && 'Ready to listen'}
+                {recognitionStatus === 'error' && 'Error occurred'}
               </p>
               <p className="text-sm text-green-700">
                 Progress: <span className="font-bold">{completedWords}/{expectedWords.length}</span>

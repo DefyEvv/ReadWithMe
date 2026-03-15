@@ -103,6 +103,10 @@ export const useSpeechRecognition = ({
     onProgressUpdateRef.current = onProgressUpdate;
   }, [onProgressUpdate]);
 
+  useEffect(() => {
+    setDebugInfo(prev => ({ ...prev, status: recognitionStatus }));
+  }, [recognitionStatus]);
+
   const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
 
   const processTranscript = useCallback((fullTranscript: string, finalPart: string, interimPart: string, sessionId: number) => {
@@ -165,6 +169,7 @@ export const useSpeechRecognition = ({
       lockedCount: currentLocked,
       wasAdvanced,
       isPageLocked: isPageLockedRef.current,
+      status: prev.status,
       sessionId: currentSessionIdRef.current
     }));
 
