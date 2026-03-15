@@ -258,22 +258,18 @@ export const ReadingScreen = ({
           <div className="bg-gray-800 text-white rounded-2xl p-4 mb-6 font-mono text-xs">
             <h3 className="font-bold mb-2 text-sm">Debug Info</h3>
             <div className="space-y-1">
-              <p className="text-blue-400 font-bold">Page ID: {currentPageIndex}</p>
-              <p className="text-cyan-400 font-bold">Session ID: {debugInfo.sessionId}</p>
-              <p className="text-purple-400 font-bold">Recognition Status: {recognitionStatus.toUpperCase()}</p>
+              <p className="text-blue-400 font-bold">Page: {currentPageIndex + 1}</p>
+              <p className="text-purple-400 font-bold">Status: {recognitionStatus.toUpperCase()}</p>
               <p>Listening: {isListening ? 'YES' : 'NO'}</p>
-              <p>Auto-listen enabled: {settings.autoListening ? 'YES' : 'NO'}</p>
-              <p className="border-t border-gray-600 pt-1 mt-2">Raw: {debugInfo.rawTranscript || '(nothing yet)'}</p>
-              <p>Normalized spoken: [{debugInfo.normalizedWords.join(', ')}]</p>
-              <p>Expected words: [{debugInfo.expectedWords.join(', ')}]</p>
-              <p className="text-green-400 font-bold">Locked count: {debugInfo.lockedCount}</p>
-              <p className="text-yellow-400 font-bold">Current matched: {debugInfo.matchedCount}</p>
+              <p>Auto-listen: {settings.autoListening ? 'YES' : 'NO'}</p>
+              <p className="border-t border-gray-600 pt-1 mt-2">You said: {debugInfo.rawTranscript || '(nothing yet)'}</p>
+              <p>Spoken words: [{debugInfo.normalizedWords.join(', ')}]</p>
+              <p>Expected: [{debugInfo.expectedWords.join(', ')}]</p>
+              <p className="text-yellow-400 font-bold">Matched: {debugInfo.matchedCount}/{expectedWords.length}</p>
               <p className={debugInfo.wasAdvanced ? 'text-green-400' : 'text-gray-400'}>
                 Progress advanced: {debugInfo.wasAdvanced ? 'YES' : 'NO'}
               </p>
-              <p className={debugInfo.isPageLocked ? 'text-red-400 font-bold' : 'text-gray-400'}>
-                Page locked: {debugInfo.isPageLocked ? 'YES - COMPLETE!' : 'NO'}
-              </p>
+              <p className="text-cyan-400">Has image: {currentPage.imagePrompt ? 'YES' : 'NO'}</p>
             </div>
           </div>
         )}
