@@ -17,10 +17,8 @@ export const getInitialProgress = (): ReadingProgress => ({
 });
 
 export const getInitialSettings = (): AppSettings => ({
-  parentAssistMode: false,
-  showWordHints: false,
   soundEnabled: true,
-  experimentalVoiceMode: false
+  showTranscript: true
 });
 
 export const loadProgress = (): ReadingProgress => {

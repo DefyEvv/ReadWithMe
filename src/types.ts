@@ -28,8 +28,6 @@ export type ReadingProgress = {
 };
 
 export type AppSettings = {
-  parentAssistMode: boolean;
-  showWordHints: boolean;
   soundEnabled: boolean;
-  experimentalVoiceMode: boolean;
+  showTranscript: boolean;
 };
