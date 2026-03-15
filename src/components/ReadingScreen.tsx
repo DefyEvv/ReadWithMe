@@ -116,24 +116,14 @@ export const ReadingScreen = ({
     setCompletedWords(0);
     setWordStates(expectedWords.map(() => 'neutral'));
     resetListening();
-
-    // Restart listening if auto-listen is on
-    if (settings.autoListening) {
-      setListening(true);
-    }
   };
 
   const handleNextPage = () => {
     console.log('[ReadingScreen] Next page clicked');
 
     if (currentPageIndex < book.pages.length - 1) {
-      // Move to next page - useSpeechRecognition hook will handle cleanup and restart
       setCurrentPageIndex(currentPageIndex + 1);
-
-      // Keep listening state if auto-listen is enabled
-      if (!settings.autoListening) {
-        setListening(false);
-      }
+      setListening(false);
     } else {
       onBookComplete();
     }
@@ -143,13 +133,8 @@ export const ReadingScreen = ({
     console.log('[ReadingScreen] Previous page clicked');
 
     if (currentPageIndex > 0) {
-      // Move to previous page - useSpeechRecognition hook will handle cleanup and restart
       setCurrentPageIndex(currentPageIndex - 1);
-
-      // Keep listening state if auto-listen is enabled
-      if (!settings.autoListening) {
-        setListening(false);
-      }
+      setListening(false);
     }
   };
 
@@ -194,13 +179,21 @@ export const ReadingScreen = ({
 
             {isSupported && (
               <button
-                onClick={() => setListening(!listening)}
+                onClick={() => {
+                  if (isListening) {
+                    stopListening();
+                    setListening(false);
+                  } else {
+                    startListening();
+                    setListening(true);
+                  }
+                }}
                 className={`p-3 rounded-full shadow-lg transition-all ${
                   isListening
                     ? 'bg-green-500 text-white animate-pulse'
                     : 'bg-white text-gray-600 hover:scale-105'
                 }`}
-                aria-label={listening ? 'Stop listening' : 'Start listening'}
+                aria-label={isListening ? 'Stop listening' : 'Start listening'}
               >
                 {isListening ? <Mic className="w-6 h-6" /> : <MicOff className="w-6 h-6" />}
               </button>
