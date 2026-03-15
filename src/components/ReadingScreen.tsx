@@ -26,6 +26,21 @@ const normalizeText = (text: string): string[] => {
     .filter(Boolean);
 };
 
+
+const getSequentialMatchCount = (sourceWords: string[], targetWords: string[]): number => {
+  let matchedCount = 0;
+
+  for (let index = 0; index < Math.min(sourceWords.length, targetWords.length); index += 1) {
+    if (sourceWords[index] !== targetWords[index]) {
+      break;
+    }
+
+    matchedCount = index + 1;
+  }
+
+  return matchedCount;
+};
+
 export const ReadingScreen = ({
   book,
   initialPage,
@@ -113,17 +128,17 @@ export const ReadingScreen = ({
 
   const scoreTranscript = (transcript: string) => {
     const spokenWords = normalizeText(transcript);
-    let detectedMatchedCount = completedWords;
+    const previousMatchedCount = completedWords;
 
-    for (let index = completedWords; index < expectedWords.length; index += 1) {
-      if (spokenWords[index] === expectedWords[index]) {
-        detectedMatchedCount = index + 1;
-      } else {
-        break;
-      }
-    }
+    const fullSentenceMatchedCount = getSequentialMatchCount(spokenWords, expectedWords);
 
-    const newMatchedCount = Math.max(completedWords, detectedMatchedCount);
+    const remainingExpectedWords = expectedWords.slice(previousMatchedCount);
+    const tailMatchedCount = getSequentialMatchCount(spokenWords, remainingExpectedWords);
+    const tailAlignedMatchedCount = previousMatchedCount + tailMatchedCount;
+
+    const detectedMatchedCount = Math.max(fullSentenceMatchedCount, tailAlignedMatchedCount);
+    const newMatchedCount = Math.max(previousMatchedCount, detectedMatchedCount);
+
     applyMatchedCount(newMatchedCount);
   };
 
