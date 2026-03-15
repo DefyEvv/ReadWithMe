@@ -47,12 +47,6 @@ export const ReadingScreen = ({
     console.log(`[ReadingScreen] Page changed to ${currentPageIndex}`);
     setWordStates(expectedWords.map(() => 'neutral'));
     setCompletedWords(0);
-
-    // Reset listening state fully
-    if (resetListeningRef.current) {
-      console.log('[ReadingScreen] Resetting listening state');
-      resetListeningRef.current();
-    }
   }, [currentPageIndex]);
 
   const handleProgressUpdate = useCallback((matchedCount: number, transcript: string, wasAdvanced: boolean) => {
@@ -124,10 +118,8 @@ export const ReadingScreen = ({
     resetListening();
 
     // Restart listening if auto-listen is on
-    if (settings.autoListening && !isListening) {
-      setTimeout(() => {
-        setListening(true);
-      }, 100);
+    if (settings.autoListening) {
+      setListening(true);
     }
   };
 
@@ -135,20 +127,13 @@ export const ReadingScreen = ({
     console.log('[ReadingScreen] Next page clicked');
 
     if (currentPageIndex < book.pages.length - 1) {
-      // Stop listening on current page before moving
-      setListening(false);
+      // Move to next page - useSpeechRecognition hook will handle cleanup and restart
+      setCurrentPageIndex(currentPageIndex + 1);
 
-      // Move to next page (this will trigger the pageId effect in useSpeechRecognition)
-      setTimeout(() => {
-        setCurrentPageIndex(currentPageIndex + 1);
-
-        // Re-enable listening for next page if auto-listen is on
-        if (settings.autoListening) {
-          setTimeout(() => {
-            setListening(true);
-          }, 100);
-        }
-      }, 100);
+      // Keep listening state if auto-listen is enabled
+      if (!settings.autoListening) {
+        setListening(false);
+      }
     } else {
       onBookComplete();
     }
@@ -158,20 +143,13 @@ export const ReadingScreen = ({
     console.log('[ReadingScreen] Previous page clicked');
 
     if (currentPageIndex > 0) {
-      // Stop listening on current page before moving
-      setListening(false);
+      // Move to previous page - useSpeechRecognition hook will handle cleanup and restart
+      setCurrentPageIndex(currentPageIndex - 1);
 
-      // Move to previous page
-      setTimeout(() => {
-        setCurrentPageIndex(currentPageIndex - 1);
-
-        // Re-enable listening for previous page if auto-listen is on
-        if (settings.autoListening) {
-          setTimeout(() => {
-            setListening(true);
-          }, 100);
-        }
-      }, 100);
+      // Keep listening state if auto-listen is enabled
+      if (!settings.autoListening) {
+        setListening(false);
+      }
     }
   };
 
@@ -268,6 +246,7 @@ export const ReadingScreen = ({
             <h3 className="font-bold mb-2 text-sm">Debug Info</h3>
             <div className="space-y-1">
               <p className="text-blue-400 font-bold">Page ID: {currentPageIndex}</p>
+              <p className="text-cyan-400 font-bold">Session ID: {debugInfo.sessionId}</p>
               <p className="text-purple-400 font-bold">Recognition Status: {recognitionStatus.toUpperCase()}</p>
               <p>Listening: {isListening ? 'YES' : 'NO'}</p>
               <p>Auto-listen enabled: {settings.autoListening ? 'YES' : 'NO'}</p>

@@ -29,6 +29,7 @@ interface UseSpeechRecognitionReturn {
     isPageLocked: boolean;
     status: RecognitionStatus;
     pageId: string | number;
+    sessionId: number;
   };
 }
 
@@ -74,7 +75,8 @@ export const useSpeechRecognition = ({
     wasAdvanced: false,
     isPageLocked: false,
     status: 'idle' as RecognitionStatus,
-    pageId: pageId
+    pageId: pageId,
+    sessionId: 0
   });
 
   const recognitionRef = useRef<any>(null);
@@ -86,6 +88,8 @@ export const useSpeechRecognition = ({
   const onProgressUpdateRef = useRef(onProgressUpdate);
   const currentPageIdRef = useRef(pageId);
   const shouldAutoRestartRef = useRef(false);
+  const currentSessionIdRef = useRef<number>(0);
+  const recognitionSessionIdRef = useRef<number>(0);
 
   useEffect(() => {
     enabledRef.current = enabled;
@@ -99,15 +103,16 @@ export const useSpeechRecognition = ({
     onProgressUpdateRef.current = onProgressUpdate;
   }, [onProgressUpdate]);
 
-  useEffect(() => {
-    currentPageIdRef.current = pageId;
-  }, [pageId]);
-
   const isSupported = 'webkitSpeechRecognition' in window || 'SpeechRecognition' in window;
 
-  const processTranscript = useCallback((fullTranscript: string, finalPart: string, interimPart: string) => {
+  const processTranscript = useCallback((fullTranscript: string, finalPart: string, interimPart: string, sessionId: number) => {
+    if (sessionId !== currentSessionIdRef.current) {
+      console.log(`[processTranscript] Ignoring transcript from old session ${sessionId}, current is ${currentSessionIdRef.current}`);
+      return;
+    }
+
     if (isPageLockedRef.current) {
-      console.log('Page locked - ignoring transcript');
+      console.log('[processTranscript] Page locked - ignoring transcript');
       return;
     }
 
@@ -148,7 +153,7 @@ export const useSpeechRecognition = ({
     if (newMatchedCount >= expected.length && expected.length > 0) {
       isPageLockedRef.current = true;
       shouldAutoRestartRef.current = false;
-      console.log('Page locked - all words complete!');
+      console.log('[processTranscript] Page locked - all words complete!');
     }
 
     setDebugInfo(prev => ({
@@ -159,16 +164,18 @@ export const useSpeechRecognition = ({
       matchedCount: newMatchedCount,
       lockedCount: currentLocked,
       wasAdvanced,
-      isPageLocked: isPageLockedRef.current
+      isPageLocked: isPageLockedRef.current,
+      sessionId: currentSessionIdRef.current
     }));
 
     onProgressUpdateRef.current(newMatchedCount, fullTranscript, wasAdvanced);
   }, []);
 
   const stopListening = useCallback(() => {
-    console.log(`[stopListening] called, status: ${recognitionStatus}`);
+    const currentStatus = recognitionStatus;
+    console.log(`[stopListening] called, status: ${currentStatus}`);
 
-    if (recognitionStatus === 'stopping' || recognitionStatus === 'stopped' || recognitionStatus === 'idle') {
+    if (currentStatus === 'stopping' || currentStatus === 'stopped' || currentStatus === 'idle') {
       console.log('[stopListening] already stopping/stopped/idle, ignoring');
       return;
     }
@@ -190,8 +197,8 @@ export const useSpeechRecognition = ({
     }
   }, [recognitionStatus]);
 
-  const resetListening = useCallback(() => {
-    console.log('[resetListening] called');
+  const resetPageReadingState = useCallback(() => {
+    console.log('[resetPageReadingState] Full page reset');
     finalTranscriptRef.current = '';
     lockedMatchedCountRef.current = 0;
     isPageLockedRef.current = false;
@@ -208,24 +215,31 @@ export const useSpeechRecognition = ({
       wasAdvanced: false,
       isPageLocked: false,
       status: prev.status,
-      pageId: currentPageIdRef.current
+      pageId: currentPageIdRef.current,
+      sessionId: currentSessionIdRef.current
     }));
   }, []);
 
+  const resetListening = useCallback(() => {
+    console.log('[resetListening] called');
+    resetPageReadingState();
+  }, [resetPageReadingState]);
+
   const startListening = useCallback(() => {
-    console.log(`[startListening] called, status: ${recognitionStatus}, enabled: ${enabledRef.current}`);
+    const currentStatus = recognitionStatus;
+    console.log(`[startListening] called, status: ${currentStatus}, enabled: ${enabledRef.current}, sessionId: ${currentSessionIdRef.current}`);
 
     if (!isSupported) {
       console.log('[startListening] not supported');
       return;
     }
 
-    if (recognitionStatus === 'starting' || recognitionStatus === 'listening') {
+    if (currentStatus === 'starting' || currentStatus === 'listening') {
       console.log('[startListening] already starting/listening, ignoring');
       return;
     }
 
-    if (recognitionStatus === 'stopping') {
+    if (currentStatus === 'stopping') {
       console.log('[startListening] currently stopping, cannot start yet');
       return;
     }
@@ -238,6 +252,9 @@ export const useSpeechRecognition = ({
     setRecognitionStatus('starting');
     setError(null);
 
+    const sessionId = currentSessionIdRef.current;
+    recognitionSessionIdRef.current = sessionId;
+
     try {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       const recognition = new SpeechRecognition();
@@ -248,13 +265,28 @@ export const useSpeechRecognition = ({
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
-        console.log('[onstart] Speech recognition started');
+        if (recognitionSessionIdRef.current !== currentSessionIdRef.current) {
+          console.log('[onstart] Session changed, stopping this recognizer');
+          try {
+            recognition.stop();
+          } catch (e) {
+            console.log('[onstart] error stopping old session:', e);
+          }
+          return;
+        }
+
+        console.log(`[onstart] Speech recognition started for session ${sessionId}`);
         setIsListening(true);
         setRecognitionStatus('listening');
         finalTranscriptRef.current = '';
       };
 
       recognition.onresult = (event: any) => {
+        if (recognitionSessionIdRef.current !== currentSessionIdRef.current) {
+          console.log('[onresult] Session changed, ignoring old session results');
+          return;
+        }
+
         if (isPageLockedRef.current) {
           console.log('[onresult] Page is locked, ignoring transcript');
           return;
@@ -280,13 +312,13 @@ export const useSpeechRecognition = ({
 
         setTranscript(combinedTranscript);
         setNormalizedTranscript(normalizeText(combinedTranscript).join(' '));
-        processTranscript(combinedTranscript, finalTranscript.trim(), interimTranscript.trim());
+        processTranscript(combinedTranscript, finalTranscript.trim(), interimTranscript.trim(), sessionId);
 
         if (isPageLockedRef.current && recognitionRef.current) {
           console.log('[onresult] Page complete - stopping recognition');
           shouldAutoRestartRef.current = false;
           setTimeout(() => {
-            if (recognitionRef.current && isPageLockedRef.current) {
+            if (recognitionRef.current && isPageLockedRef.current && recognitionSessionIdRef.current === sessionId) {
               try {
                 recognitionRef.current.stop();
               } catch (e) {
@@ -304,6 +336,11 @@ export const useSpeechRecognition = ({
           return;
         }
 
+        if (recognitionSessionIdRef.current !== currentSessionIdRef.current) {
+          console.log('[onerror] Error from old session, ignoring');
+          return;
+        }
+
         if (event.error === 'not-allowed') {
           setError('Microphone access denied. Please allow microphone access.');
           setIsListening(false);
@@ -317,16 +354,21 @@ export const useSpeechRecognition = ({
       };
 
       recognition.onend = () => {
-        console.log(`[onend] Speech recognition ended, shouldAutoRestart: ${shouldAutoRestartRef.current}, enabled: ${enabledRef.current}, pageLocked: ${isPageLockedRef.current}`);
+        console.log(`[onend] Speech recognition ended for session ${sessionId}, current: ${currentSessionIdRef.current}, shouldAutoRestart: ${shouldAutoRestartRef.current}, enabled: ${enabledRef.current}, pageLocked: ${isPageLockedRef.current}`);
+
+        if (recognitionSessionIdRef.current !== currentSessionIdRef.current) {
+          console.log('[onend] Old session ended, ignoring');
+          return;
+        }
 
         setIsListening(false);
         setRecognitionStatus('stopped');
         recognitionRef.current = null;
 
-        if (shouldAutoRestartRef.current && enabledRef.current && !isPageLockedRef.current) {
+        if (shouldAutoRestartRef.current && enabledRef.current && !isPageLockedRef.current && recognitionSessionIdRef.current === currentSessionIdRef.current) {
           console.log('[onend] Auto-restarting recognition in 500ms');
           setTimeout(() => {
-            if (shouldAutoRestartRef.current && enabledRef.current && !isPageLockedRef.current) {
+            if (shouldAutoRestartRef.current && enabledRef.current && !isPageLockedRef.current && recognitionSessionIdRef.current === currentSessionIdRef.current) {
               console.log('[onend] Restarting now');
               startListening();
             } else {
@@ -354,6 +396,13 @@ export const useSpeechRecognition = ({
   useEffect(() => {
     console.log(`[pageId effect] Page changed to: ${pageId}`);
 
+    // Increment session ID to invalidate old recognition instances
+    currentSessionIdRef.current += 1;
+    currentPageIdRef.current = pageId;
+
+    const newSessionId = currentSessionIdRef.current;
+    console.log(`[pageId effect] New session ID: ${newSessionId}`);
+
     // Stop current recognition immediately
     shouldAutoRestartRef.current = false;
     if (recognitionRef.current) {
@@ -367,21 +416,24 @@ export const useSpeechRecognition = ({
     }
 
     // Reset all page-specific state
-    resetListening();
+    resetPageReadingState();
     setIsListening(false);
     setRecognitionStatus('idle');
 
     // If enabled, start after a brief delay to ensure cleanup is complete
     if (enabled) {
-      console.log('[pageId effect] Will auto-start in 300ms');
+      console.log('[pageId effect] Will auto-start in 400ms');
       const timer = setTimeout(() => {
-        if (enabledRef.current && currentPageIdRef.current === pageId) {
+        if (enabledRef.current && currentSessionIdRef.current === newSessionId) {
           console.log('[pageId effect] Auto-starting for new page');
           startListening();
+        } else {
+          console.log('[pageId effect] Session changed or disabled, not starting');
         }
-      }, 300);
+      }, 400);
 
       return () => {
+        console.log('[pageId cleanup] Cleaning up page effect');
         clearTimeout(timer);
         shouldAutoRestartRef.current = false;
         if (recognitionRef.current) {
@@ -396,6 +448,7 @@ export const useSpeechRecognition = ({
     }
 
     return () => {
+      console.log('[pageId cleanup] Cleaning up (no auto-start)');
       shouldAutoRestartRef.current = false;
       if (recognitionRef.current) {
         try {
@@ -406,20 +459,7 @@ export const useSpeechRecognition = ({
         recognitionRef.current = null;
       }
     };
-  }, [pageId, enabled, resetListening, startListening]);
-
-  // Handle enabled toggle (not page change)
-  useEffect(() => {
-    console.log(`[enabled effect] Enabled changed to: ${enabled}`);
-
-    if (enabled && recognitionStatus === 'idle') {
-      console.log('[enabled effect] Starting listening');
-      startListening();
-    } else if (!enabled && (recognitionStatus === 'listening' || recognitionStatus === 'starting')) {
-      console.log('[enabled effect] Stopping listening');
-      stopListening();
-    }
-  }, [enabled, recognitionStatus, startListening, stopListening]);
+  }, [pageId, enabled, resetPageReadingState, startListening]);
 
   return {
     isListening,
